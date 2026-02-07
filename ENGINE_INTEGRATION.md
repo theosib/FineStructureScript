@@ -49,7 +49,7 @@ generic execution model.
 ### 2.1 Core Types
 
 ```cpp
-namespace scriptlang {
+namespace finescript {
 
 /// Script value — the universal type in the language.
 /// Corresponds to: nil, bool, int, float, string, symbol, array, map, function.
@@ -114,6 +114,21 @@ using NativeFunction = std::function<Value(std::span<const Value> args)>;
 using ContextFunction = std::function<Value(class ExecutionContext& ctx,
                                              std::span<const Value> args)>;
 
+/// Abstract string interner interface. finescript ships with a built-in
+/// implementation (DefaultInterner). Host applications can provide their own
+/// by subclassing this and passing it to ScriptEngine::setInterner().
+/// When all components share one interner, symbol IDs are interchangeable.
+class Interner {
+public:
+    virtual ~Interner() = default;
+
+    /// Intern a string, returning a unique ID. Same string → same ID.
+    virtual uint32_t intern(std::string_view str) = 0;
+
+    /// Look up the string for an interned ID.
+    virtual std::string_view lookup(uint32_t id) const = 0;
+};
+
 /// A native function object — a C++ object with state and a callable method.
 /// From the script's perspective, it looks like a regular function.
 /// From C++'s perspective, it's an object that can hold references to engine
@@ -157,13 +172,13 @@ public:
     virtual std::vector<uint32_t> keys() const = 0;
 };
 
-} // namespace scriptlang
+} // namespace finescript
 ```
 
 ### 2.2 Script Engine
 
 ```cpp
-namespace scriptlang {
+namespace finescript {
 
 class ScriptEngine {
 public:
@@ -212,13 +227,13 @@ public:
     void registerConstant(std::string_view name, Value value);
 
     // =========================================================================
-    // Symbol Interning (shared with engine's StringInterner)
+    // Symbol Interning (pluggable — see §4.1)
     // =========================================================================
 
-    /// Set the string interner to use. If not set, uses an internal one.
-    /// When integrating with finevox, pass the engine's StringInterner
-    /// so that script symbols and BlockTypeId share the same intern table.
-    void setInterner(finevox::StringInterner* interner);
+    /// Set a custom string interner. If not set, uses the built-in one.
+    /// The engine takes a non-owning pointer; the caller must ensure the
+    /// interner outlives the ScriptEngine.
+    void setInterner(Interner* interner);
 
     /// Intern a string, returning its symbol ID.
     uint32_t intern(std::string_view str);
@@ -231,7 +246,7 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace scriptlang
+} // namespace finescript
 ```
 
 ### 2.3 Execution Context
@@ -240,7 +255,7 @@ The execution context is created per-invocation. It holds the local scope
 (pre-bound context variables) for a single script execution.
 
 ```cpp
-namespace scriptlang {
+namespace finescript {
 
 class ExecutionContext {
 public:
@@ -277,7 +292,7 @@ private:
     // ... scope, event handler collection, etc.
 };
 
-} // namespace scriptlang
+} // namespace finescript
 ```
 
 ---
@@ -341,22 +356,76 @@ the block data (e.g., in a `ScriptedBlockHandler` cache).
 
 ## 4. Integration with Engine Systems
 
-### 4.1 Symbol Interning — Shared
+### 4.1 Symbol Interning — Pluggable
 
-The scripting language's symbols use the **same StringInterner** as the engine.
-This means `:stone` in a script resolves to the same `uint32_t` as
-`BlockTypeId::fromName("stone")`.
+finescript ships with a `DefaultInterner` (simple `std::vector<std::string>`
++ `std::unordered_map` for reverse lookup). This works standalone.
+
+When integrating with a host application that has its own interning system,
+wrap it in the `Interner` interface so all components share the same ID space:
 
 ```cpp
-// During engine initialization
-ScriptEngine scriptEngine;
-scriptEngine.setInterner(&finevox::StringInterner::instance());
+// finescript's built-in interner (used by default)
+namespace finescript {
 
-// Now in script code:
-//   setblock target.x target.y target.z stone
-// "stone" is looked up → finds the engine-bound Value for stone's BlockTypeId
-// No string comparison needed — it's the same interned ID
+class DefaultInterner : public Interner {
+public:
+    uint32_t intern(std::string_view str) override {
+        auto it = index_.find(str);
+        if (it != index_.end()) return it->second;
+        uint32_t id = static_cast<uint32_t>(strings_.size());
+        strings_.emplace_back(str);
+        index_[strings_.back()] = id;
+        return id;
+    }
+
+    std::string_view lookup(uint32_t id) const override {
+        return strings_.at(id);
+    }
+
+private:
+    std::vector<std::string> strings_;
+    std::unordered_map<std::string_view, uint32_t> index_;
+};
+
+} // namespace finescript
 ```
+
+```cpp
+// Wrapper for FineStructureVoxel's StringInterner
+class FineVoxInterner : public finescript::Interner {
+public:
+    explicit FineVoxInterner(finevox::StringInterner& interner)
+        : interner_(interner) {}
+
+    uint32_t intern(std::string_view str) override {
+        return interner_.intern(str).id();
+    }
+
+    std::string_view lookup(uint32_t id) const override {
+        return interner_.lookup(finevox::InternedId(id));
+    }
+
+private:
+    finevox::StringInterner& interner_;
+};
+
+// Usage:
+FineVoxInterner wrapper(finevox::StringInterner::instance());
+finescript::ScriptEngine engine;
+engine.setInterner(&wrapper);  // now :stone == BlockTypeId for "stone"
+```
+
+```cpp
+// Wrapper for any other application's interner (e.g., finegui)
+class MyAppInterner : public finescript::Interner {
+    // ... same pattern: delegate intern() and lookup() to host system
+};
+```
+
+When all components use the same interner, `:stone` in a script resolves to
+the same `uint32_t` as `BlockTypeId::fromName("stone")`. No mapping table,
+no string comparison — symbol IDs are directly interchangeable.
 
 ### 4.2 Block Handlers — ScriptedBlockHandler
 
@@ -368,7 +437,7 @@ namespace finevox {
 
 class ScriptedBlockHandler : public BlockHandler {
 public:
-    ScriptedBlockHandler(scriptlang::ScriptEngine& engine,
+    ScriptedBlockHandler(finescript::ScriptEngine& engine,
                           const std::filesystem::path& scriptPath);
 
     void onPlace(BlockContext& ctx) override {
@@ -408,13 +477,13 @@ public:
     }
 
 private:
-    scriptlang::ScriptEngine& engine_;
+    finescript::ScriptEngine& engine_;
     std::filesystem::path scriptPath_;
 
     // Cached: the script's parsed event handlers
     struct CachedHandlers {
-        std::unique_ptr<scriptlang::CompiledScript> script;
-        std::unordered_map<uint32_t, scriptlang::Value> handlers;  // event → closure
+        std::unique_ptr<finescript::CompiledScript> script;
+        std::unordered_map<uint32_t, finescript::Value> handlers;  // event → closure
     };
     CachedHandlers cached_;
 
@@ -423,10 +492,10 @@ private:
     void loadAndCacheHandlers();
 
     /// Get a cached handler for an event type.
-    scriptlang::Value* getHandler(EventType type);
+    finescript::Value* getHandler(EventType type);
 
     /// Build an execution context from a BlockContext.
-    scriptlang::ExecutionContext makeContext(BlockContext& ctx);
+    finescript::ExecutionContext makeContext(BlockContext& ctx);
 };
 
 } // namespace finevox
@@ -435,17 +504,17 @@ private:
 ### How makeContext Works
 
 ```cpp
-scriptlang::ExecutionContext ScriptedBlockHandler::makeContext(BlockContext& ctx) {
-    scriptlang::ExecutionContext sctx(engine_);
+finescript::ExecutionContext ScriptedBlockHandler::makeContext(BlockContext& ctx) {
+    finescript::ExecutionContext sctx(engine_);
 
     // Pre-bind context variables as script-accessible objects
-    auto target = scriptlang::Value::map();
+    auto target = finescript::Value::map();
     target.mapSet("x", Value::integer(ctx.pos().x));
     target.mapSet("y", Value::integer(ctx.pos().y));
     target.mapSet("z", Value::integer(ctx.pos().z));
     sctx.set("target", std::move(target));
 
-    auto self = scriptlang::Value::map();
+    auto self = finescript::Value::map();
     self.mapSet("x", Value::integer(ctx.pos().x));
     self.mapSet("y", Value::integer(ctx.pos().y));
     self.mapSet("z", Value::integer(ctx.pos().z));
@@ -453,7 +522,7 @@ scriptlang::ExecutionContext ScriptedBlockHandler::makeContext(BlockContext& ctx
     sctx.set("self", std::move(self));
 
     // Bind world operations as native functions on a world object
-    auto world = scriptlang::Value::map();
+    auto world = finescript::Value::map();
     // world.getBlock, world.setBlock, etc. are native functions
     // that capture &ctx.world() and delegate to C++
     sctx.set("world", std::move(world));
@@ -496,7 +565,7 @@ Entity behavior scripts follow the same pattern but attach to Entity::tick():
 class ScriptedEntity : public Entity {
 public:
     ScriptedEntity(EntityId id, EntityType type,
-                    scriptlang::ScriptEngine& engine,
+                    finescript::ScriptEngine& engine,
                     const std::filesystem::path& scriptPath);
 
     void tick(float dt, World& world) override {
@@ -508,7 +577,7 @@ public:
     }
 
 private:
-    scriptlang::ScriptEngine& engine_;
+    finescript::ScriptEngine& engine_;
     // ... cached handlers, persistent script scope for entity state
 };
 ```
@@ -524,7 +593,7 @@ Custom generation passes can be defined in scripts:
 ```cpp
 class ScriptedGenerationPass : public GenerationPass {
 public:
-    ScriptedGenerationPass(scriptlang::ScriptEngine& engine,
+    ScriptedGenerationPass(finescript::ScriptEngine& engine,
                              const std::filesystem::path& scriptPath,
                              std::string_view name,
                              int32_t priority);
@@ -538,8 +607,8 @@ public:
     }
 
 private:
-    scriptlang::ExecutionContext makeGenContext(GenerationContext& ctx) {
-        scriptlang::ExecutionContext sctx(engine_);
+    finescript::ExecutionContext makeGenContext(GenerationContext& ctx) {
+        finescript::ExecutionContext sctx(engine_);
 
         // Expose heightmap, biome data, noise functions, etc.
         sctx.set("heightmap", wrapHeightmap(ctx.heightmap));
@@ -563,7 +632,7 @@ Commands are the simplest integration — just parse and execute:
 ```cpp
 // In the command handler (e.g., chat bar, console)
 void handleCommand(std::string_view input, Entity* executor) {
-    scriptlang::ExecutionContext ctx(scriptEngine_);
+    finescript::ExecutionContext ctx(scriptEngine_);
 
     // Bind the executor as "player"
     if (executor) {
@@ -691,21 +760,21 @@ Each frame, the `GuiRenderer` walks the widget tree between
 ```cpp
 class GuiRenderer {
 public:
-    GuiRenderer(scriptlang::ScriptEngine& engine, finegui::GuiSystem& gui);
+    GuiRenderer(finescript::ScriptEngine& engine, finegui::GuiSystem& gui);
 
     /// Call each frame inside beginFrame/endFrame to render active GUIs.
     void renderAll();
 
     /// Show a widget tree (called from script's ui.show).
-    void show(scriptlang::Value widgetTree);
+    void show(finescript::Value widgetTree);
 
     /// Hide/close a widget tree.
     void hide(int guiId);
 
 private:
-    void renderWidget(scriptlang::Value& widget);
+    void renderWidget(finescript::Value& widget);
 
-    void renderWindow(scriptlang::Value& w) {
+    void renderWindow(finescript::Value& w) {
         auto title = w.mapGet("title").asString();
         bool open = true;
         if (ImGui::Begin(std::string(title).c_str(), &open)) {
@@ -718,7 +787,7 @@ private:
         if (!open) w.mapSet("visible", Value::boolean(false));
     }
 
-    void renderButton(scriptlang::Value& w) {
+    void renderButton(finescript::Value& w) {
         auto label = w.mapGet("label").asString();
         if (ImGui::Button(std::string(label).c_str())) {
             auto& callback = w.mapGet("on_click");
@@ -728,7 +797,7 @@ private:
         }
     }
 
-    void renderSlider(scriptlang::Value& w) {
+    void renderSlider(finescript::Value& w) {
         auto label = w.mapGet("label").asString();
         float val = static_cast<float>(w.mapGet("value").asNumber());
         float lo = static_cast<float>(w.mapGet("min").asNumber());
@@ -1232,10 +1301,10 @@ invocation, we use a **ProxyMap** that reads/writes directly from the
 ```cpp
 /// ProxyMap backed by a DataContainer. Reads and writes go directly
 /// to the container — no serialization boundary for script access.
-class DataContainerProxy : public scriptlang::ProxyMap {
+class DataContainerProxy : public finescript::ProxyMap {
 public:
     explicit DataContainerProxy(finevox::DataContainer& container,
-                                 scriptlang::ScriptEngine& engine)
+                                 finescript::ScriptEngine& engine)
         : container_(container), engine_(engine) {}
 
     Value get(uint32_t key) const override {
@@ -1271,7 +1340,7 @@ public:
 
 private:
     finevox::DataContainer& container_;
-    scriptlang::ScriptEngine& engine_;
+    finescript::ScriptEngine& engine_;
 };
 ```
 
@@ -1286,8 +1355,8 @@ as a proxy map variable:
 // "script_source" → string (the script text)
 // "script_data"   → nested DataContainer (script-accessible state)
 
-scriptlang::ExecutionContext ScriptedBlockHandler::makeContext(BlockContext& ctx) {
-    scriptlang::ExecutionContext sctx(engine_);
+finescript::ExecutionContext ScriptedBlockHandler::makeContext(BlockContext& ctx) {
+    finescript::ExecutionContext sctx(engine_);
 
     // ... bind target, self, world as before ...
 
@@ -1324,8 +1393,8 @@ world save/load automatically.
 Same pattern — the entity's DataContainer is wrapped in a ProxyMap:
 
 ```cpp
-scriptlang::ExecutionContext ScriptedEntity::makeContext(float dt, World& world) {
-    scriptlang::ExecutionContext sctx(engine_);
+finescript::ExecutionContext ScriptedEntity::makeContext(float dt, World& world) {
+    finescript::ExecutionContext sctx(engine_);
 
     sctx.set("dt", Value::number(dt));
     // ... bind self, world, etc. ...

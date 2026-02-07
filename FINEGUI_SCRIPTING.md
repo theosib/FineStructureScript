@@ -392,8 +392,8 @@ engine.registerFunction("ui.button", [](auto args) -> Value {
 ```cpp
 /// Convert a script Value (map hierarchy) into a WidgetNode tree.
 /// Called once when ui.show is invoked.
-WidgetNode convertToWidget(const scriptlang::Value& map,
-                            scriptlang::ScriptEngine& engine) {
+WidgetNode convertToWidget(const finescript::Value& map,
+                            finescript::ScriptEngine& engine) {
     WidgetNode node;
 
     auto typeSym = map.mapGet("type").asSymbol();
@@ -474,7 +474,7 @@ Otherwise the closures would reference a dead scope.
 ```cpp
 struct ActiveGui {
     int guiId;                                          // GuiRenderer ID
-    std::unique_ptr<scriptlang::ExecutionContext> ctx;   // keeps closures alive
+    std::unique_ptr<finescript::ExecutionContext> ctx;   // keeps closures alive
 };
 
 // When ui.show is called from a script:
@@ -562,13 +562,13 @@ public:
 private:
     struct ActiveScriptGui {
         int guiId;
-        std::unique_ptr<scriptlang::ExecutionContext> ctx;
+        std::unique_ptr<finescript::ExecutionContext> ctx;
         // Message handlers registered by the script via gui.on_message
-        std::unordered_map<uint32_t, scriptlang::Value> messageHandlers;
+        std::unordered_map<uint32_t, finescript::Value> messageHandlers;
     };
 
     std::vector<ActiveScriptGui> activeGuis_;
-    scriptlang::ScriptEngine& engine_;
+    finescript::ScriptEngine& engine_;
     GuiRenderer& renderer_;
 };
 

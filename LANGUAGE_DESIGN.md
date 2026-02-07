@@ -944,6 +944,11 @@ Node = NumberLit(value)
 
 ## 16. Implementation Notes
 
+### Project Name and Namespace
+
+The script engine is called **finescript**. C++ namespace: `finescript`.
+Build target: `libfinescript`. File extension: `.fsc` (or `.script`).
+
 ### Architecture
 
 ```
@@ -953,6 +958,149 @@ Source Text → Tokenizer → Parser → AST → Tree-Walk Evaluator
 An AST-walking interpreter is the initial target. For short scripts (event
 handlers, commands, small logic blocks), this is fast enough. If performance
 becomes an issue, the AST is a clean target for compilation to bytecode.
+
+### Build
+
+- **C++17** — wide compiler support, no bleeding-edge requirements
+- **CMake** build system
+- **Catch2** test framework
+- No external dependencies beyond the standard library (the engine
+  integration headers are optional, not required to build finescript)
+
+### Resolved Implementation Decisions
+
+#### Value Representation
+
+`std::variant` with inline small types and heap-allocated reference-counted
+storage for complex types. Variant handles construction/destruction of
+`shared_ptr` members correctly — no manual placement new/destroy needed.
+
+```cpp
+using ValueVariant = std::variant<
+    std::monostate,                          // nil
+    bool,                                    // boolean
+    int64_t,                                 // integer
+    double,                                  // float
+    uint32_t,                                // symbol (interned ID)
+    std::shared_ptr<std::string>,            // string (heap)
+    std::shared_ptr<std::vector<Value>>,     // array (heap)
+    std::shared_ptr<MapData>,                // map or proxy (heap)
+    std::shared_ptr<Closure>,                // script function (heap)
+    std::shared_ptr<NativeFunctionObject>    // native function (heap)
+>;
+```
+
+The variant's built-in index serves as the type tag. Reference counting
+(via `shared_ptr`) handles memory management for heap-allocated values.
+No garbage collector needed. Copying a `Value` is cheap for small types
+(inline copy) and shared for complex types (refcount bump).
+
+#### Map Keys: Symbols Only
+
+Map keys are **always symbols** (interned `uint32_t` IDs). No string or
+integer keys. This means:
+
+- `m.set :name "Alice"` — `:name` is a symbol key
+- `m.name` — dot notation looks up symbol `name`
+- Maps are essentially symbol-indexed structs
+- Hash map keyed by `uint32_t` — fast and simple
+
+#### Integer Division: Truncating
+
+`(3 / 2)` = `1` (integer). Int / int = int, like C.
+Use `(3.0 / 2)` or `{float 3} / 2` for float division.
+Mixed int/float operations promote to float: `(3 + 1.5)` = `4.5`.
+
+#### For-Loop Capture: Shared (Python-style)
+
+All closures in a loop body share the same loop variable. The last
+iteration's value wins:
+
+```
+set fns []
+for i in 0..5 do
+    array.push fns fn [] do return i end
+end
+# All functions return 4 (last value of i before loop ended)
+```
+
+To capture per-iteration values, use an immediately-invoked function or
+bind to a local:
+
+```
+for i in 0..5 do
+    set captured i  # captured is a new binding each time (same scope, but
+                    # the closure captures the value at binding time...
+                    # actually no — same scope, same variable)
+    # Correct pattern: wrap in a function
+    array.push fns {fn [x] do return fn [] do return x end end} i
+end
+```
+
+#### `set` with Dot Notation (Compound Assignment)
+
+`set a.b.c 5` is parsed as a compound set:
+1. Evaluate `a` → get map M1
+2. Evaluate `M1.b` → get map M2
+3. Set key `c` on M2 to `5`
+
+The macro splits the dotted name: evaluate all segments except the last
+to navigate to the target map, then set the final segment as a key.
+
+Plain `set x 5` creates or updates `x` in the nearest enclosing scope
+(Python-style).
+
+#### `fn` Named vs Anonymous
+
+The `fn` macro inspects its unevaluated arguments to determine form:
+
+- `fn add [a b] (a + b)` — arg[0] is a symbol, arg[1] is an array →
+  **named function**. Binds `add` in the current scope.
+- `fn [a b] (a + b)` — arg[0] is an array → **anonymous function**.
+  Returns the closure as a value.
+
+#### `do...end` Parsing
+
+`do...end` is always parsed as a block node. For macro keywords (`if`,
+`for`, `while`, `fn`, `on`), the parser has special-case grammar:
+
+- `if <expr> do <body> end [else do <body> end]`
+- `for <name> in <expr> do <body> end`
+- `while <expr> do <body> end`
+- `fn <name> [<params>] do <body> end`
+- `on <event> do <body> end`
+
+The parser recognizes these keywords and knows `do` is a block delimiter.
+Standalone `do <body> end` at statement level is the `do` macro
+(sequential evaluation in shared scope).
+
+Since there are only ~10 macros, special-casing each is practical and
+efficient. User-defined functions have no special syntax.
+
+#### `source` Scoping
+
+`source "lib.script"` executes the sourced file in the **current scope**,
+like bash's `source` command. Functions and variables defined in the sourced
+file become visible to the sourcer.
+
+#### Error Position Tracking
+
+Every AST node carries source location: file ID (uint16), line (uint16),
+column (uint16). ~6 bytes per node overhead, worth it for usable error
+messages:
+
+```
+[SCRIPT ERROR] sign.script:15:8: cannot call nil as function
+```
+
+#### String Interner: Pluggable
+
+The script engine ships with a built-in interner, but exposes an abstract
+interface so host applications can provide their own (e.g., the voxel
+engine's `StringInterner`). When all components share an interner, script
+symbol IDs and engine IDs are interchangeable — no mapping needed.
+
+See `ENGINE_INTEGRATION.md` §4.1 for details.
 
 ### Backend Options
 
@@ -971,30 +1119,6 @@ can target an existing runtime:
 
 Parser generators (PEG-based or otherwise) can be used for the tokenizer
 and parser stages. The grammar is regular enough for most tools.
-
-### C++ Integration
-
-The engine provides a C++ API surface that the scripting language binds to:
-
-```cpp
-class ScriptInterpreter {
-public:
-    // Execute a command string
-    ScriptResult executeCommand(std::string_view command);
-
-    // Execute a multi-line script
-    ScriptResult executeScript(std::string_view script);
-
-    // Compile for repeated execution
-    std::unique_ptr<CompiledScript> compile(std::string_view script);
-};
-
-struct ScriptResult {
-    bool success;
-    std::string error;
-    Value value;  // variant of int, float, string, symbol, array, map, nil
-};
-```
 
 ### Error Handling
 
