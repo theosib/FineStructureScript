@@ -8,6 +8,7 @@
 #include "finescript/script_engine.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace finescript {
 
@@ -47,6 +48,7 @@ void Evaluator::preInternSymbols() {
     sym_starts_with_ = interner_.intern("starts_with");
     sym_ends_with_ = interner_.intern("ends_with");
     sym_char_at_ = interner_.intern("char_at");
+    sym_sort_by_ = interner_.intern("sort_by");
 }
 
 // -- Main dispatch --
@@ -80,6 +82,7 @@ Value Evaluator::eval(const AstNode& node, std::shared_ptr<Scope> scope,
         case AstNodeKind::Block:       return evalBlock(node, scope, ctx);
         case AstNodeKind::Index:       return evalIndex(node, scope, ctx);
         case AstNodeKind::Ref:        return evalRef(node, scope, ctx);
+        case AstNodeKind::MapLit:     return evalMapLit(node, scope, ctx);
         case AstNodeKind::Set:         return evalSet(node, scope, ctx);
         case AstNodeKind::Let:         return evalLet(node, scope, ctx);
         case AstNodeKind::Fn:          return evalFn(node, scope);
@@ -205,6 +208,20 @@ Value Evaluator::evalDottedName(const AstNode& node, std::shared_ptr<Scope> scop
 Value Evaluator::evalCall(const AstNode& node, std::shared_ptr<Scope> scope,
                            ExecutionContext* ctx) {
     auto& verbNode = *node.children[0];
+    size_t numNamed = node.nameParts.size();  // named arg keys stored in Call's nameParts
+    size_t totalChildren = node.children.size();
+    size_t numPosArgs = totalChildren - 1 - numNamed; // exclude verb
+
+    // Helper: evaluate named args into pairs
+    auto evalNamedArgs = [&]() -> std::vector<std::pair<uint32_t, Value>> {
+        std::vector<std::pair<uint32_t, Value>> result;
+        for (size_t i = 0; i < numNamed; i++) {
+            uint32_t sym = interner_.intern(node.nameParts[i]);
+            Value val = eval(*node.children[numPosArgs + 1 + i], scope, ctx);
+            result.push_back({sym, std::move(val)});
+        }
+        return result;
+    };
 
     // Method call: verb is DottedName
     if (verbNode.kind == AstNodeKind::DottedName && !verbNode.nameParts.empty()) {
@@ -225,13 +242,13 @@ Value Evaluator::evalCall(const AstNode& node, std::shared_ptr<Scope> scope,
         const std::string& methodName = verbNode.nameParts.back();
         uint32_t methodSym = interner_.intern(methodName);
 
-        // Evaluate arguments
+        // Evaluate positional arguments only
         std::vector<Value> args;
-        for (size_t i = 1; i < node.children.size(); i++) {
+        for (size_t i = 1; i <= numPosArgs; i++) {
             args.push_back(eval(*node.children[i], scope, ctx));
         }
 
-        // Check built-in methods
+        // Check built-in methods (named args not supported for built-ins)
         if (receiver.isMap() && isBuiltinMapMethod(methodSym)) {
             return dispatchBuiltinMethod(receiver, methodSym, std::move(args), scope, ctx, node.loc);
         }
@@ -252,16 +269,21 @@ Value Evaluator::evalCall(const AstNode& node, std::shared_ptr<Scope> scope,
                     args.insert(args.begin(), receiver);
                 }
                 // Zero-arg access on non-callable field: return value directly
-                if (args.empty() && !func.isCallable()) {
+                if (args.empty() && numNamed == 0 && !func.isCallable()) {
                     return func;
+                }
+                // Named arg dispatch for closures
+                if (numNamed > 0 && func.isClosure()) {
+                    auto namedArgs = evalNamedArgs();
+                    auto& closure = func.asClosure();
+                    return callClosureWithNamed(closure, std::move(args), std::move(namedArgs), ctx, node.loc);
                 }
                 return callFunction(func, std::move(args), scope, ctx, node.loc);
             }
         }
 
         // Zero-arg call with no method found: fall back to evalDottedName for property access
-        // (handles str.length, arr properties evaluated as DottedName, etc.)
-        if (args.empty()) {
+        if (args.empty() && numNamed == 0) {
             return evalDottedName(verbNode, scope, ctx);
         }
 
@@ -272,14 +294,20 @@ Value Evaluator::evalCall(const AstNode& node, std::shared_ptr<Scope> scope,
     Value verb = eval(verbNode, scope, ctx);
 
     std::vector<Value> args;
-    for (size_t i = 1; i < node.children.size(); i++) {
+    for (size_t i = 1; i <= numPosArgs; i++) {
         args.push_back(eval(*node.children[i], scope, ctx));
     }
 
     // Zero-arg call on non-callable: return the value
-    // (bare name in statement position auto-wraps in Call; non-callable values pass through)
-    if (args.empty() && !verb.isCallable()) {
+    if (args.empty() && numNamed == 0 && !verb.isCallable()) {
         return verb;
+    }
+
+    // Named arg dispatch for closures
+    if (numNamed > 0 && verb.isClosure()) {
+        auto namedArgs = evalNamedArgs();
+        auto& closure = const_cast<Value&>(verb).asClosure();
+        return callClosureWithNamed(closure, std::move(args), std::move(namedArgs), ctx, node.loc);
     }
 
     return callFunction(verb, std::move(args), scope, ctx, node.loc);
@@ -291,13 +319,23 @@ Value Evaluator::evalInfix(const AstNode& node, std::shared_ptr<Scope> scope,
                             ExecutionContext* ctx) {
     const auto& op = node.op;
 
-    // Short-circuit logical operators
+    // Short-circuit operators
     if (op == "and") {
         Value left = eval(*node.children[0], scope, ctx);
         if (!left.truthy()) return left;
         return eval(*node.children[1], scope, ctx);
     }
     if (op == "or") {
+        Value left = eval(*node.children[0], scope, ctx);
+        if (left.truthy()) return left;
+        return eval(*node.children[1], scope, ctx);
+    }
+    if (op == "??") {
+        Value left = eval(*node.children[0], scope, ctx);
+        if (!left.isNil()) return left;
+        return eval(*node.children[1], scope, ctx);
+    }
+    if (op == "?:") {
         Value left = eval(*node.children[0], scope, ctx);
         if (left.truthy()) return left;
         return eval(*node.children[1], scope, ctx);
@@ -386,6 +424,22 @@ Value Evaluator::evalRef(const AstNode& node, std::shared_ptr<Scope> scope,
     return eval(*node.children[0], scope, ctx);
 }
 
+// -- MapLit --
+
+Value Evaluator::evalMapLit(const AstNode& node, std::shared_ptr<Scope> scope,
+                             ExecutionContext* ctx) {
+    Value mapVal = Value::map();
+    MapData& map = mapVal.asMap();
+
+    for (size_t i = 0; i < node.nameParts.size(); i++) {
+        uint32_t sym = interner_.intern(node.nameParts[i]);
+        Value val = eval(*node.children[i], scope, ctx);
+        map.set(sym, val);
+    }
+
+    return mapVal;
+}
+
 // -- Set --
 
 Value Evaluator::evalSet(const AstNode& node, std::shared_ptr<Scope> scope,
@@ -444,9 +498,15 @@ Value Evaluator::evalFn(const AstNode& node, std::shared_ptr<Scope> scope) {
     closure->body = node.children[0].get();
     closure->astRoot = currentAstRoot_;  // keeps AST alive
     closure->capturedScope = scope;
+    closure->numRequired = static_cast<size_t>(node.intValue);
 
     for (const auto& param : node.nameParts) {
         closure->paramIds.push_back(interner_.intern(param));
+    }
+
+    // Default expressions (children[1..] are defaults for optional params)
+    for (size_t i = 1; i < node.children.size(); i++) {
+        closure->defaultExprs.push_back(node.children[i].get());
     }
 
     Value closureVal = Value::closure(closure);
@@ -625,13 +685,62 @@ Value Evaluator::callClosure(Closure& closure, std::vector<Value> args,
                               ExecutionContext* ctx, SourceLocation /*callSite*/) {
     auto callScope = closure.capturedScope->createChild();
 
-    // Bind parameters
+    // Bind parameters (with default support)
     for (size_t i = 0; i < closure.paramIds.size(); i++) {
-        Value val = (i < args.size()) ? args[i] : Value::nil();
-        callScope->define(closure.paramIds[i], val);
+        if (i < args.size()) {
+            callScope->define(closure.paramIds[i], args[i]);
+        } else if (i >= closure.numRequired &&
+                   (i - closure.numRequired) < closure.defaultExprs.size() &&
+                   closure.defaultExprs[i - closure.numRequired] != nullptr) {
+            // Evaluate default expression at call time
+            Value def = eval(*closure.defaultExprs[i - closure.numRequired], callScope, ctx);
+            callScope->define(closure.paramIds[i], def);
+        } else {
+            callScope->define(closure.paramIds[i], Value::nil());
+        }
     }
 
     // Evaluate body, catching ReturnSignal at function boundary
+    try {
+        return eval(*closure.body, callScope, ctx);
+    } catch (ReturnSignal& sig) {
+        return std::move(sig.value());
+    }
+}
+
+Value Evaluator::callClosureWithNamed(Closure& closure, std::vector<Value> posArgs,
+                                       std::vector<std::pair<uint32_t, Value>> namedArgs,
+                                       ExecutionContext* ctx, SourceLocation /*callSite*/) {
+    auto callScope = closure.capturedScope->createChild();
+
+    for (size_t i = 0; i < closure.paramIds.size(); i++) {
+        if (i < posArgs.size()) {
+            // Positionally provided
+            callScope->define(closure.paramIds[i], posArgs[i]);
+        } else {
+            // Check named args
+            bool found = false;
+            for (auto& [sym, val] : namedArgs) {
+                if (sym == closure.paramIds[i]) {
+                    callScope->define(closure.paramIds[i], val);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // Try default
+                if (i >= closure.numRequired &&
+                    (i - closure.numRequired) < closure.defaultExprs.size() &&
+                    closure.defaultExprs[i - closure.numRequired] != nullptr) {
+                    Value def = eval(*closure.defaultExprs[i - closure.numRequired], callScope, ctx);
+                    callScope->define(closure.paramIds[i], def);
+                } else {
+                    callScope->define(closure.paramIds[i], Value::nil());
+                }
+            }
+        }
+    }
+
     try {
         return eval(*closure.body, callScope, ctx);
     } catch (ReturnSignal& sig) {
@@ -650,8 +759,8 @@ bool Evaluator::isBuiltinMapMethod(uint32_t sym) const {
 bool Evaluator::isBuiltinArrayMethod(uint32_t sym) const {
     return sym == sym_length_ || sym == sym_push_ || sym == sym_pop_ ||
            sym == sym_get_ || sym == sym_set_ || sym == sym_slice_ ||
-           sym == sym_contains_ || sym == sym_sort_ || sym == sym_map_ ||
-           sym == sym_filter_ || sym == sym_foreach_;
+           sym == sym_contains_ || sym == sym_sort_ || sym == sym_sort_by_ ||
+           sym == sym_map_ || sym == sym_filter_ || sym == sym_foreach_;
 }
 
 bool Evaluator::isBuiltinStringMethod(uint32_t sym) const {
@@ -784,6 +893,17 @@ Value Evaluator::dispatchBuiltinMethod(const Value& object, uint32_t methodSym,
                 if (a.isNumeric() && b.isNumeric()) return a.asNumber() < b.asNumber();
                 if (a.isString() && b.isString()) return a.asString() < b.asString();
                 return false;
+            });
+            return object;
+        }
+        if (methodSym == sym_sort_by_) {
+            if (args.empty() || !args[0].isCallable()) {
+                throw ScriptError("array.sort_by requires a comparator function", loc);
+            }
+            auto& comparator = args[0];
+            std::sort(arr.begin(), arr.end(), [&](const Value& a, const Value& b) {
+                Value result = callFunction(comparator, {a, b}, scope, ctx, loc);
+                return result.truthy();
             });
             return object;
         }
@@ -1035,6 +1155,59 @@ Value Evaluator::applyBinOp(const std::string& op, const Value& left, const Valu
     // String concatenation with +
     if (op == "+" && left.isString() && right.isString()) {
         return Value::string(left.asString() + right.asString());
+    }
+
+    // Array concatenation with +
+    if (op == "+" && left.isArray() && right.isArray()) {
+        auto& leftArr = left.asArray();
+        auto& rightArr = right.asArray();
+        std::vector<Value> result;
+        result.reserve(leftArr.size() + rightArr.size());
+        result.insert(result.end(), leftArr.begin(), leftArr.end());
+        result.insert(result.end(), rightArr.begin(), rightArr.end());
+        return Value::array(std::move(result));
+    }
+
+    // String format with % (printf-style: "%.2f" % 3.14)
+    if (op == "%" && left.isString()) {
+        const auto& fmt = left.asString();
+        if (fmt.empty() || fmt[0] != '%') {
+            throw ScriptError("Format string must start with '%'", loc);
+        }
+        // Find the conversion specifier (last character)
+        char spec = fmt.back();
+        char buf[256];
+        int n = 0;
+        switch (spec) {
+            case 'd': case 'i': {
+                int64_t v = right.isInt() ? right.asInt() :
+                            right.isFloat() ? static_cast<int64_t>(right.asFloat()) : 0;
+                n = snprintf(buf, sizeof(buf), fmt.c_str(), v);
+                break;
+            }
+            case 'f': case 'e': case 'g':
+            case 'F': case 'E': case 'G': {
+                double v = right.isFloat() ? right.asFloat() :
+                           right.isInt() ? static_cast<double>(right.asInt()) : 0.0;
+                n = snprintf(buf, sizeof(buf), fmt.c_str(), v);
+                break;
+            }
+            case 'x': case 'X': case 'o': {
+                int64_t v = right.isInt() ? right.asInt() :
+                            right.isFloat() ? static_cast<int64_t>(right.asFloat()) : 0;
+                n = snprintf(buf, sizeof(buf), fmt.c_str(), v);
+                break;
+            }
+            case 's': {
+                std::string s = right.isString() ? right.asString() : right.toString(&interner_);
+                n = snprintf(buf, sizeof(buf), fmt.c_str(), s.c_str());
+                break;
+            }
+            default:
+                throw ScriptError("Unknown format specifier: %" + std::string(1, spec), loc);
+        }
+        if (n < 0) throw ScriptError("Format error", loc);
+        return Value::string(std::string(buf, static_cast<size_t>(std::min(n, (int)(sizeof(buf) - 1)))));
     }
 
     // Arithmetic and comparison (numeric)

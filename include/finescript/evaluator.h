@@ -45,6 +45,7 @@ private:
     uint32_t sym_insert_, sym_delete_, sym_replace_, sym_split_;
     uint32_t sym_substr_, sym_find_, sym_upper_, sym_lower_, sym_trim_;
     uint32_t sym_starts_with_, sym_ends_with_, sym_char_at_;
+    uint32_t sym_sort_by_;
 
     void preInternSymbols();
 
@@ -65,6 +66,7 @@ private:
     Value evalBlock(const AstNode& node, std::shared_ptr<Scope> scope, ExecutionContext* ctx);
     Value evalIndex(const AstNode& node, std::shared_ptr<Scope> scope, ExecutionContext* ctx);
     Value evalRef(const AstNode& node, std::shared_ptr<Scope> scope, ExecutionContext* ctx);
+    Value evalMapLit(const AstNode& node, std::shared_ptr<Scope> scope, ExecutionContext* ctx);
 
     Value evalSet(const AstNode& node, std::shared_ptr<Scope> scope, ExecutionContext* ctx);
     Value evalLet(const AstNode& node, std::shared_ptr<Scope> scope, ExecutionContext* ctx);
@@ -79,6 +81,9 @@ private:
 
     Value callClosure(Closure& closure, std::vector<Value> args,
                       ExecutionContext* ctx, SourceLocation callSite);
+    Value callClosureWithNamed(Closure& closure, std::vector<Value> posArgs,
+                               std::vector<std::pair<uint32_t, Value>> namedArgs,
+                               ExecutionContext* ctx, SourceLocation callSite);
 
     // Built-in map/array method dispatch
     Value dispatchBuiltinMethod(const Value& object, uint32_t methodSymbol,

@@ -36,6 +36,7 @@ enum class AstNodeKind {
     Source,
     Index,
     Ref,
+    MapLit,
 };
 
 struct AstNode {
@@ -83,5 +84,6 @@ std::unique_ptr<AstNode> makeOn(std::string eventName, std::unique_ptr<AstNode> 
 std::unique_ptr<AstNode> makeReturn(std::unique_ptr<AstNode> value, SourceLocation loc);
 std::unique_ptr<AstNode> makeSource(std::unique_ptr<AstNode> filename, SourceLocation loc);
 std::unique_ptr<AstNode> makeRef(std::unique_ptr<AstNode> operand, SourceLocation loc);
+std::unique_ptr<AstNode> makeMapLit(std::vector<std::string> keys, std::vector<std::unique_ptr<AstNode>> values, SourceLocation loc);
 
 } // namespace finescript

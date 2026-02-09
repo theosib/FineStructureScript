@@ -5,9 +5,11 @@ Compact reference for LLMs generating or analyzing finescript code.
 ## Syntax Model
 
 Prefix-first: `verb arg arg ...`. Three bracket types with distinct roles:
-- `{expr}` = evaluate prefix expression, return result
+- `{expr}` = evaluate prefix expression, return result (also map literal: `{=key val ...}`)
 - `(expr)` = infix math/logic
 - `[a b c]` = array literal
+
+Three symbol sigils: `name` (scope lookup), `:name` (literal symbol), `=name` (key specifier for map literals, named params, default params).
 
 Newline or `;` separates statements. `#` starts line comment.
 
@@ -35,11 +37,15 @@ let y 10                       # always creates in current scope
 fn name [params] body          # named
 fn [params] body               # anonymous
 fn name [params] do ... end    # multi-line
+fn name [req =opt default] body  # with default parameter values
 ```
 Last expression is return value. `return val` for early exit (non-local jump).
-Closures capture defining scope by reference.
+Closures capture defining scope by reference. Defaults evaluated at call time.
 
 `~name` prevents auto-calling, returns function reference.
+
+Named parameters at call site: `{func posArg =name1 val1 =name2 val2}`.
+Named args matched to param names; unmatched params get defaults or nil.
 
 ## Control Flow
 
@@ -58,10 +64,14 @@ return val
 
 ## Operators (inside parens, by precedence low→high)
 
-`or` `and` `==` `!=` `<` `>` `<=` `>=` `..` `..=` `+` `-` `*` `/` `%` `not` `-`(unary)
+`??` `?:` `or` `and` `==` `!=` `<` `>` `<=` `>=` `..` `..=` `+` `-` `*` `/` `%` `not` `-`(unary)
 
-int/int division truncates. Mixed int/float promotes to float. `+` concatenates strings.
+int/int division truncates. Mixed int/float promotes to float. `+` concatenates strings and arrays.
 `and`/`or` short-circuit. `..` exclusive range, `..=` inclusive range (both produce arrays).
+`??` null coalesce: returns left unless nil, then evaluates right. `?:` falsy coalesce: returns left unless falsy.
+`%` on strings: format operator — `("%.2f" % 3.14)` → `"3.14"` (snprintf-style).
+`+` on arrays: concatenation — `([1 2] + [3 4])` → `[1 2 3 4]` (new array).
+Both `??` and `?:` also work as prefix verbs: `{?? expr fallback}`, `{?: expr fallback}`.
 
 ## Strings
 
@@ -77,12 +87,16 @@ a[-1]                 # negative index from end
 
 Methods (dot-call on array):
 - `.length` `.push elem` `.pop` `.get i` `.set i val`
-- `.slice start [end]` `.contains val` `.sort`
+- `.slice start [end]` `.contains val` `.sort` `.sort_by fn`
 - `.map fn` `.filter fn` `.foreach fn`
 
 ## Maps
 
-Symbol keys only. Create: `{map :key1 val1 :key2 val2}`.
+Symbol keys only. Two creation syntaxes:
+```
+{=key1 val1 =key2 val2}           # map literal (preferred)
+{map :key1 val1 :key2 val2}       # map function (legacy)
+```
 
 ```
 m.field               # dot access
@@ -96,7 +110,7 @@ Methods: `.get :key` `.set :key val` `.has :key` `.remove :key` `.keys` `.values
 Maps with methods. `setMethod` marks a function as a method; dot-call auto-injects receiver as first arg (`self`).
 
 ```
-set obj {map :hp 100}
+set obj {=hp 100}
 obj.setMethod :damage fn [self amt] do
     set self.hp (self.hp - amt)
 end
@@ -138,13 +152,30 @@ Map: `map :k1 v1 :k2 v2 ...`
 ```
 # Factory function (constructor pattern)
 fn makeThing [x y] do
-    set t {map :x x :y y}
+    set t {=x x =y y}
     t.setMethod :move fn [self dx dy] do
         set self.x (self.x + dx)
         set self.y (self.y + dy)
     end
     return t
 end
+
+# Default parameters
+fn connect [host =port 8080 =timeout 30] do
+    print "Connecting to" host "port" port
+end
+connect "localhost"                    # port=8080, timeout=30
+connect "localhost" =port 9090         # override port only
+
+# Named parameters
+fn createWidget [=type :button =label "OK" =width 100] do
+    {=type type =label label =width width}
+end
+set w {createWidget =label "Cancel" =type :link}
+
+# Null coalescing
+set name (?? player.name "Unknown")
+set hp (health ?: 100)                # falsy coalesce
 
 # Counter closure
 fn makeCounter [] do
@@ -155,6 +186,15 @@ end
 # Higher-order
 set doubled {arr.map fn [x] (x * 2)}
 set big {arr.filter fn [x] (x > 10)}
+
+# Custom sort
+set sorted {items.sort_by fn [a b] (a.name < b.name)}
+
+# Array concatenation
+set all (base_items + extra_items)
+
+# String formatting
+set label ("%.1f" % fps)
 
 # Iterate map
 for k in {m.keys} do

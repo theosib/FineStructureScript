@@ -43,6 +43,9 @@ const char* tokenTypeName(TokenType type) {
         case TokenType::Or: return "Or";
         case TokenType::Not: return "Not";
         case TokenType::Tilde: return "Tilde";
+        case TokenType::NullCoalesce: return "NullCoalesce";
+        case TokenType::FalsyCoalesce: return "FalsyCoalesce";
+        case TokenType::KeyName: return "KeyName";
         case TokenType::Do: return "Do";
         case TokenType::End: return "End";
         case TokenType::If: return "If";
@@ -479,6 +482,15 @@ Token Lexer::scanToken() {
                 advance();
                 return makeToken(TokenType::EqualEqual, "==", startLoc);
             }
+            if (isIdentStart(current())) {
+                // Key name: =identifier
+                size_t nameStart = pos_;
+                while (!isAtEnd() && isIdentChar(current())) {
+                    advance();
+                }
+                std::string name(source_.substr(nameStart, pos_ - nameStart));
+                return makeToken(TokenType::KeyName, std::move(name), startLoc);
+            }
             throw std::runtime_error("Unexpected '=' — did you mean '=='?");
 
         case '!':
@@ -487,6 +499,17 @@ Token Lexer::scanToken() {
                 return makeToken(TokenType::BangEqual, "!=", startLoc);
             }
             throw std::runtime_error("Unexpected '!' — did you mean '!='?");
+
+        case '?':
+            if (current() == '?') {
+                advance();
+                return makeToken(TokenType::NullCoalesce, "??", startLoc);
+            }
+            if (current() == ':') {
+                advance();
+                return makeToken(TokenType::FalsyCoalesce, "?:", startLoc);
+            }
+            throw std::runtime_error("Unexpected '?' -- did you mean '??' or '?:'?");
 
         case '~':
             return makeToken(TokenType::Tilde, "~", startLoc);

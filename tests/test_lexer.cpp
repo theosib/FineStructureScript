@@ -392,3 +392,63 @@ TEST_CASE("Lexer tilde with space", "[lexer]") {
     CHECK(tokens[2].type == TokenType::Name);
     CHECK(tokens[3].type == TokenType::IntLiteral);
 }
+
+TEST_CASE("Lexer KeyName token", "[lexer]") {
+    auto tokens = tokenize("=foo =bar_baz");
+    CHECK(tokens[0].type == TokenType::KeyName);
+    CHECK(tokens[0].text == "foo");
+    CHECK(tokens[1].type == TokenType::KeyName);
+    CHECK(tokens[1].text == "bar_baz");
+}
+
+TEST_CASE("Lexer KeyName in context", "[lexer]") {
+    auto tokens = tokenize("{=x 10 =y 20}");
+    CHECK(tokens[0].type == TokenType::LeftBrace);
+    CHECK(tokens[1].type == TokenType::KeyName);
+    CHECK(tokens[1].text == "x");
+    CHECK(tokens[2].type == TokenType::IntLiteral);
+    CHECK(tokens[3].type == TokenType::KeyName);
+    CHECK(tokens[3].text == "y");
+    CHECK(tokens[4].type == TokenType::IntLiteral);
+    CHECK(tokens[5].type == TokenType::RightBrace);
+}
+
+TEST_CASE("Lexer == vs =name", "[lexer]") {
+    auto tokens = tokenize("(a == b) =opt 5");
+    CHECK(tokens[0].type == TokenType::LeftParen);
+    CHECK(tokens[1].type == TokenType::Name);
+    CHECK(tokens[2].type == TokenType::EqualEqual);
+    CHECK(tokens[3].type == TokenType::Name);
+    CHECK(tokens[4].type == TokenType::RightParen);
+    CHECK(tokens[5].type == TokenType::KeyName);
+    CHECK(tokens[5].text == "opt");
+    CHECK(tokens[6].type == TokenType::IntLiteral);
+}
+
+TEST_CASE("Lexer null coalesce ??", "[lexer]") {
+    auto tokens = tokenize("(a ?? b)");
+    CHECK(tokens[0].type == TokenType::LeftParen);
+    CHECK(tokens[1].type == TokenType::Name);
+    CHECK(tokens[2].type == TokenType::NullCoalesce);
+    CHECK(tokens[3].type == TokenType::Name);
+    CHECK(tokens[4].type == TokenType::RightParen);
+}
+
+TEST_CASE("Lexer falsy coalesce ?:", "[lexer]") {
+    auto tokens = tokenize("(a ?: b)");
+    CHECK(tokens[0].type == TokenType::LeftParen);
+    CHECK(tokens[1].type == TokenType::Name);
+    CHECK(tokens[2].type == TokenType::FalsyCoalesce);
+    CHECK(tokens[3].type == TokenType::Name);
+    CHECK(tokens[4].type == TokenType::RightParen);
+}
+
+TEST_CASE("Lexer ?: followed by :symbol", "[lexer]") {
+    auto tokens = tokenize("(a ?: :default)");
+    CHECK(tokens[0].type == TokenType::LeftParen);
+    CHECK(tokens[1].type == TokenType::Name);
+    CHECK(tokens[2].type == TokenType::FalsyCoalesce);
+    CHECK(tokens[3].type == TokenType::SymbolLiteral);
+    CHECK(tokens[3].text == "default");
+    CHECK(tokens[4].type == TokenType::RightParen);
+}

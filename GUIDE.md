@@ -32,7 +32,7 @@ Newlines separate statements. Semicolons work too: `set x 5; print x`.
 | Nil | `nil` | The absence of a value |
 | Symbol | `:stone`, `:interact` | Interned name, used as map keys |
 | Array | `[1 2 3]` | Ordered, heterogeneous |
-| Map | `{map :x 10 :y 20}` | Symbol-keyed dictionary |
+| Map | `{=x 10 =y 20}` | Symbol-keyed dictionary |
 | Function | `fn [x] (x * 2)` | First-class, closures |
 
 ### Truthiness
@@ -184,6 +184,21 @@ end
 set square fn [x] (x * x)
 ```
 
+### Default Parameter Values
+
+Optional parameters have defaults specified with `=name default`:
+
+```
+fn make_slot [item =size 48] do
+    print "Slot for {item} at size {size}"
+end
+
+make_slot "sword"             # size defaults to 48
+make_slot "sword" 64          # size is 64
+```
+
+Required parameters come first, optional parameters last.
+
 ### Calling Functions
 
 Functions are called in prefix position:
@@ -192,6 +207,22 @@ Functions are called in prefix position:
 double 5                      # 10
 print {clamp 150 0 100}       # 100
 ```
+
+### Named Parameters
+
+Use `=name value` to pass arguments by name:
+
+```
+fn make_button [label =size 24 =color "white"] do
+    {=type :button =label label =size size =color color}
+end
+
+# Pass only the args you need
+make_button "OK" =color "green"  # size defaults to 24
+make_button "Cancel" =size 32    # color defaults to "white"
+```
+
+Named parameters can appear in any order after positional arguments.
 
 Without explicit `return`, a function returns its last expression.
 
@@ -383,7 +414,8 @@ a.get 0                       # 1
 a.set 0 99                    # [99 2 3]
 a.slice 1 3                   # [2 3]
 a.contains 2                  # true
-a.sort                        # in-place sort
+a.sort                        # in-place sort (natural order)
+a.sort_by fn [x y] (x > y)   # sort with custom comparator
 
 # Higher-order
 a.map fn [x] (x * 2)         # returns new array
@@ -395,10 +427,10 @@ a.foreach fn [x] { print x } # iterates, returns nil
 
 ## Maps (Dictionaries)
 
-Maps use symbol keys (`:name` syntax). Create them with the `map` built-in.
+Maps use symbol keys. Create them with the `{=key value}` literal syntax:
 
 ```
-set m {map :name "Alice" :age 30 :score 100}
+set m {=name "Alice" =age 30 =score 100}
 
 # Dot access
 print m.name                  # "Alice"
@@ -420,9 +452,11 @@ end
 
 ```
 set m.name "Bob"              # set works with dot notation
-set m.address {map :city "NYC" :zip "10001"}
+set m.address {=city "NYC" =zip "10001"}
 set m.address.city "LA"       # nested dot set
 ```
+
+The `map` built-in also still works: `{map :name "Alice" :age 30}`.
 
 ---
 
@@ -434,7 +468,7 @@ method --- it will automatically receive the object as its first argument
 
 ```
 fn makeEnemy [hp speed] do
-    set e {map :health hp :speed speed :alive true}
+    set e {=health hp =speed speed =alive true}
 
     e.setMethod :damage fn [self amount] do
         set self.health (self.health - amount)
@@ -507,18 +541,42 @@ Definitions from the sourced file become available in the current scope.
 | Precedence | Operators | Description |
 |-----------|-----------|-------------|
 | Highest | `not`, `-` (unary) | Logical/arithmetic negation |
-| 7 | `*`, `/`, `%` | Multiply, divide (truncating for int), modulo |
-| 6 | `+`, `-` | Add, subtract |
+| 7 | `*`, `/`, `%` | Multiply, divide (truncating for int), modulo/format |
+| 6 | `+`, `-` | Add, subtract, concatenate |
 | 5 | `..`, `..=` | Range (exclusive, inclusive) |
 | 4 | `<`, `>`, `<=`, `>=` | Comparison |
 | 3 | `==`, `!=` | Equality |
 | 2 | `and` | Logical and (short-circuit) |
-| Lowest | `or` | Logical or (short-circuit) |
+| 1 | `or` | Logical or (short-circuit) |
+| Lowest | `??`, `?:` | Null/falsy coalescing (short-circuit) |
 
 Integer division truncates: `(7 / 2)` is `3`. Mix in a float for float
 division: `(7.0 / 2)` is `3.5`.
 
 String concatenation with `+`: `("hello" + " " + "world")`.
+Array concatenation with `+`: `([1 2] + [3 4])` produces `[1 2 3 4]`.
+
+### String Format Operator `%`
+
+The `%` operator on strings does printf-style formatting:
+
+```
+("%.2f" % 3.14159)           # "3.14"
+("%d" % 42)                  # "42"
+("%04x" % 255)               # "00ff"
+```
+
+Supported specifiers: `%d`, `%i`, `%f`, `%e`, `%g`, `%x`, `%X`, `%o`, `%s`.
+Integers auto-promote to float for `%f`.
+
+### Null / Falsy Coalescing
+
+```
+(x ?? "default")              # returns x unless x is nil
+(x ?: "default")              # returns x unless x is falsy (nil or false)
+```
+
+Prefix form also works: `{?? x "default"}` and `{?: x "default"}`.
 
 ---
 
@@ -711,7 +769,7 @@ while (n > 0) { set n (n - 1) }
 
 # Data structures
 set arr [1 2 3]
-set m {map :key "value"}
+set m {=key "value"}
 print arr[0]
 print m.key
 

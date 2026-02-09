@@ -52,6 +52,9 @@ enum class TokenType {
     Or,
     Not,
     Tilde,
+    NullCoalesce,    // ??
+    FalsyCoalesce,   // ?:
+    KeyName,         // =identifier (key specifier for named params / map literals)
 
     // Keywords
     Do,

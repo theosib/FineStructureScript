@@ -162,6 +162,7 @@ std::unique_ptr<AstNode> makeFn(std::string name, std::vector<std::string> param
     n->kind = AstNodeKind::Fn;
     n->loc = loc;
     n->stringValue = std::move(name);
+    n->intValue = static_cast<int64_t>(params.size()); // all params required (no defaults)
     n->nameParts = std::move(params);
     n->children.push_back(std::move(body));
     return n;
@@ -239,6 +240,15 @@ std::unique_ptr<AstNode> makeRef(std::unique_ptr<AstNode> operand, SourceLocatio
     return n;
 }
 
+std::unique_ptr<AstNode> makeMapLit(std::vector<std::string> keys, std::vector<std::unique_ptr<AstNode>> values, SourceLocation loc) {
+    auto n = std::make_unique<AstNode>();
+    n->kind = AstNodeKind::MapLit;
+    n->loc = loc;
+    n->nameParts = std::move(keys);
+    n->children = std::move(values);
+    return n;
+}
+
 // -- Parser implementation --
 
 namespace {
@@ -297,6 +307,8 @@ private:
             case TokenType::Source:    return parseSource();
             case TokenType::Do:        return parseDoBlock();
             case TokenType::LeftBrace: return parseBraceExpr();
+            case TokenType::NullCoalesce:  return parseCoalescePrefix();
+            case TokenType::FalsyCoalesce: return parseCoalescePrefix();
             default:                   return parsePrefixCall();
         }
     }
@@ -310,7 +322,15 @@ private:
         while (isAtomStart()) {
             parts.push_back(parseAtom());
         }
-        if (parts.size() == 1) {
+
+        // Check for named arguments (=key value pairs)
+        std::vector<std::string> namedKeys;
+        while (lexer_.peek().type == TokenType::KeyName) {
+            namedKeys.push_back(lexer_.next().text);
+            parts.push_back(parseAtom());
+        }
+
+        if (parts.size() == 1 && namedKeys.empty()) {
             // A bare Name or DottedName in statement position is a zero-arg call.
             // Literals (int, string, etc.) remain as-is.
             auto kind = parts[0]->kind;
@@ -319,7 +339,11 @@ private:
             }
             return std::move(parts[0]);
         }
-        return makeCall(std::move(parts), loc);
+        auto callNode = makeCall(std::move(parts), loc);
+        if (!namedKeys.empty()) {
+            callNode->nameParts = std::move(namedKeys);
+        }
+        return callNode;
     }
 
     // ---- Atom parsing ----
@@ -450,12 +474,31 @@ private:
     std::unique_ptr<AstNode> parseBraceExpr() {
         auto loc = peekLoc();
         lexer_.next(); // consume '{'
+
+        // Check for map literal: {=key val =key val ...}
+        if (lexer_.peek().type == TokenType::KeyName) {
+            return parseMapLiteralBody(loc);
+        }
+
         auto stmts = parseStatementsUntil({TokenType::RightBrace});
         expect(TokenType::RightBrace, "Expected '}'");
         if (stmts.size() == 1) {
             return std::move(stmts[0]);
         }
         return makeBlock(std::move(stmts), loc);
+    }
+
+    std::unique_ptr<AstNode> parseMapLiteralBody(SourceLocation loc) {
+        std::vector<std::string> keys;
+        std::vector<std::unique_ptr<AstNode>> values;
+
+        while (lexer_.peek().type == TokenType::KeyName) {
+            keys.push_back(lexer_.next().text);
+            values.push_back(parseAtom());
+        }
+
+        expect(TokenType::RightBrace, "Expected '}'");
+        return makeMapLit(std::move(keys), std::move(values), loc);
     }
 
     std::unique_ptr<AstNode> parseArrayLiteral() {
@@ -582,9 +625,26 @@ private:
 
         expect(TokenType::LeftBracket, "Expected '[' for parameter list");
         std::vector<std::string> params;
+        std::vector<std::unique_ptr<AstNode>> defaults;
+        int numRequired = 0;
+        bool seenOptional = false;
+
         while (lexer_.peek().type != TokenType::RightBracket) {
-            auto p = expect(TokenType::Name, "Expected parameter name");
-            params.push_back(p.text);
+            if (lexer_.peek().type == TokenType::KeyName) {
+                // Optional param with default: =name default_value
+                seenOptional = true;
+                auto keyTok = lexer_.next();
+                params.push_back(keyTok.text);
+                defaults.push_back(parseAtom());
+            } else {
+                if (seenOptional) {
+                    throw std::runtime_error(
+                        "Required parameters must come before optional parameters");
+                }
+                auto p = expect(TokenType::Name, "Expected parameter name");
+                params.push_back(p.text);
+                numRequired++;
+            }
         }
         expect(TokenType::RightBracket, "Expected ']'");
 
@@ -598,7 +658,21 @@ private:
             body = parseAtom();
         }
 
-        return makeFn(std::move(name), std::move(params), std::move(body), loc);
+        // Build Fn node: children[0] = body, children[1..] = default exprs
+        // intValue = numRequired, nameParts = all param names
+        auto n = std::make_unique<AstNode>();
+        n->kind = AstNodeKind::Fn;
+        n->loc = loc;
+        n->stringValue = std::move(name);
+        n->intValue = defaults.empty()
+            ? static_cast<int64_t>(params.size())  // all required
+            : static_cast<int64_t>(numRequired);
+        n->nameParts = std::move(params);
+        n->children.push_back(std::move(body));
+        for (auto& def : defaults) {
+            n->children.push_back(std::move(def));
+        }
+        return n;
     }
 
     std::unique_ptr<AstNode> parseIf() {
@@ -729,6 +803,13 @@ private:
         return makeSource(parseAtom(), loc);
     }
 
+    std::unique_ptr<AstNode> parseCoalescePrefix() {
+        auto tok = lexer_.next(); // consume '??' or '?:'
+        auto expr = parseAtom();
+        auto fallback = parseAtom();
+        return makeInfix(tok.text, std::move(expr), std::move(fallback), tok.location);
+    }
+
     // ---- Helpers ----
 
     std::unique_ptr<AstNode> parseRangeOrAtom() {
@@ -830,6 +911,8 @@ private:
 
     static int infixPrecedence(TokenType type) {
         switch (type) {
+            case TokenType::NullCoalesce:
+            case TokenType::FalsyCoalesce: return 0;
             case TokenType::Or: return 1;
             case TokenType::And: return 2;
             case TokenType::EqualEqual:

@@ -1089,3 +1089,307 @@ TEST_CASE("String methods chained operations", "[evaluator][string]") {
     CHECK(env.run("s.length").asInt() == 13);
     CHECK(env.run("{s.find \"World\"}").asInt() == 7);
 }
+
+// === Map Literals ===
+
+TEST_CASE("Map literal with =key syntax", "[evaluator][maplit]") {
+    TestEnv env;
+    env.run("set m {=x 10 =y 20}");
+    CHECK(env.run("m.x").asInt() == 10);
+    CHECK(env.run("m.y").asInt() == 20);
+}
+
+TEST_CASE("Map literal with expressions", "[evaluator][maplit]") {
+    TestEnv env;
+    env.run("set a 5");
+    env.run("set m {=val (a + 1) =name \"hello\"}");
+    CHECK(env.run("m.val").asInt() == 6);
+    CHECK(env.run("m.name").asString() == "hello");
+}
+
+TEST_CASE("Map literal empty", "[evaluator][maplit]") {
+    TestEnv env;
+    // Empty braces are a block, not an empty map — just verify map with one key
+    env.run("set m {=x 1}");
+    CHECK(env.run("m.x").asInt() == 1);
+}
+
+TEST_CASE("Map literal nested", "[evaluator][maplit]") {
+    TestEnv env;
+    env.run("set m {=inner {=a 1 =b 2}}");
+    CHECK(env.run("m.inner.a").asInt() == 1);
+    CHECK(env.run("m.inner.b").asInt() == 2);
+}
+
+// === Named Parameters ===
+
+TEST_CASE("Named params basic", "[evaluator][named_params]") {
+    TestEnv env;
+    env.run("fn greet [name greeting] {greeting}");
+    CHECK(env.run("{greet \"Alice\" \"Hi\"}").asString() == "Hi");
+    // Named param overriding positional position
+    CHECK(env.run("{greet \"Alice\" =greeting \"Hey\"}").asString() == "Hey");
+}
+
+TEST_CASE("Named params skip positional", "[evaluator][named_params]") {
+    TestEnv env;
+    env.run("fn make [a b c] [a b c]");
+    auto result = env.run("{make 1 =c 3 =b 2}");
+    CHECK(result.isArray());
+    auto& arr = result.asArray();
+    CHECK(arr[0].asInt() == 1);
+    CHECK(arr[1].asInt() == 2);
+    CHECK(arr[2].asInt() == 3);
+}
+
+TEST_CASE("Named params all named", "[evaluator][named_params]") {
+    TestEnv env;
+    env.run("fn point [x y] [x y]");
+    auto result = env.run("{point =y 20 =x 10}");
+    CHECK(result.isArray());
+    auto& arr = result.asArray();
+    CHECK(arr[0].asInt() == 10);
+    CHECK(arr[1].asInt() == 20);
+}
+
+// === Default Parameter Values ===
+
+TEST_CASE("Default params basic", "[evaluator][defaults]") {
+    TestEnv env;
+    env.run("fn greet [name =greeting \"Hello\"] \"({greeting}, {name}!)\"");
+    CHECK(env.run("{greet \"Alice\"}").asString() == "(Hello, Alice!)");
+    CHECK(env.run("{greet \"Bob\" \"Hi\"}").asString() == "(Hi, Bob!)");
+}
+
+TEST_CASE("Default params multiple", "[evaluator][defaults]") {
+    TestEnv env;
+    env.run("fn make_rect [=width 100 =height 50] (width * height)");
+    CHECK(env.run("{make_rect}").asInt() == 5000);
+    CHECK(env.run("{make_rect 200}").asInt() == 10000);
+    CHECK(env.run("{make_rect 200 30}").asInt() == 6000);
+}
+
+TEST_CASE("Default params with named args", "[evaluator][defaults]") {
+    TestEnv env;
+    env.run("fn widget [label =size 48 =color \"red\"] [label size color]");
+    auto result = env.run("{widget \"btn\" =color \"blue\"}");
+    CHECK(result.isArray());
+    auto& arr = result.asArray();
+    CHECK(arr[0].asString() == "btn");
+    CHECK(arr[1].asInt() == 48);
+    CHECK(arr[2].asString() == "blue");
+}
+
+TEST_CASE("Default params evaluated at call time", "[evaluator][defaults]") {
+    TestEnv env;
+    env.run("set counter 0");
+    env.run("fn next_id [=id counter] do\n  set counter (counter + 1)\n  return id\nend");
+    CHECK(env.run("{next_id}").asInt() == 0);
+    CHECK(env.run("{next_id}").asInt() == 1);
+    CHECK(env.run("{next_id 99}").asInt() == 99);
+}
+
+// === Null Coalescing Operators ===
+
+TEST_CASE("Null coalesce ?? with nil", "[evaluator][coalesce]") {
+    TestEnv env;
+    CHECK(env.run("(nil ?? 42)").asInt() == 42);
+}
+
+TEST_CASE("Null coalesce ?? with non-nil", "[evaluator][coalesce]") {
+    TestEnv env;
+    CHECK(env.run("(10 ?? 42)").asInt() == 10);
+}
+
+TEST_CASE("Null coalesce ?? false is not nil", "[evaluator][coalesce]") {
+    TestEnv env;
+    // false is not nil, so ?? returns false
+    CHECK(env.run("(false ?? 42)").asBool() == false);
+}
+
+TEST_CASE("Null coalesce ?? short-circuits", "[evaluator][coalesce]") {
+    TestEnv env;
+    // Right side should not be evaluated
+    env.run("set x 0");
+    env.run("set y (5 ?? {set x 1; 99})");
+    CHECK(env.run("y").asInt() == 5);
+    CHECK(env.run("x").asInt() == 0);
+}
+
+TEST_CASE("Falsy coalesce ?: with nil", "[evaluator][coalesce]") {
+    TestEnv env;
+    CHECK(env.run("(nil ?: 42)").asInt() == 42);
+}
+
+TEST_CASE("Falsy coalesce ?: with false", "[evaluator][coalesce]") {
+    TestEnv env;
+    CHECK(env.run("(false ?: 42)").asInt() == 42);
+}
+
+TEST_CASE("Falsy coalesce ?: with truthy", "[evaluator][coalesce]") {
+    TestEnv env;
+    CHECK(env.run("(\"hello\" ?: \"default\")").asString() == "hello");
+}
+
+TEST_CASE("Null coalesce prefix form", "[evaluator][coalesce]") {
+    TestEnv env;
+    CHECK(env.run("{?? nil 42}").asInt() == 42);
+    CHECK(env.run("{?? 10 42}").asInt() == 10);
+}
+
+TEST_CASE("Falsy coalesce prefix form", "[evaluator][coalesce]") {
+    TestEnv env;
+    CHECK(env.run("{?: false 42}").asInt() == 42);
+    CHECK(env.run("{?: \"hi\" 42}").asString() == "hi");
+}
+
+TEST_CASE("Chained null coalesce", "[evaluator][coalesce]") {
+    TestEnv env;
+    CHECK(env.run("(nil ?? nil ?? 42)").asInt() == 42);
+    CHECK(env.run("(nil ?? 10 ?? 42)").asInt() == 10);
+}
+
+// === Array Concatenation ===
+
+TEST_CASE("Array concat with +", "[evaluator][array_concat]") {
+    TestEnv env;
+    auto result = env.run("([1 2] + [3 4])");
+    CHECK(result.isArray());
+    auto& arr = result.asArray();
+    CHECK(arr.size() == 4);
+    CHECK(arr[0].asInt() == 1);
+    CHECK(arr[1].asInt() == 2);
+    CHECK(arr[2].asInt() == 3);
+    CHECK(arr[3].asInt() == 4);
+}
+
+TEST_CASE("Array concat empty arrays", "[evaluator][array_concat]") {
+    TestEnv env;
+    auto result = env.run("([] + [1 2])");
+    CHECK(result.asArray().size() == 2);
+    auto result2 = env.run("([1 2] + [])");
+    CHECK(result2.asArray().size() == 2);
+}
+
+TEST_CASE("Array concat creates new array", "[evaluator][array_concat]") {
+    TestEnv env;
+    env.run("set a [1 2]");
+    env.run("set b [3 4]");
+    env.run("set c (a + b)");
+    // Mutating c should not affect a or b
+    env.run("{c.push 5}");
+    CHECK(env.run("a.length").asInt() == 2);
+    CHECK(env.run("b.length").asInt() == 2);
+    CHECK(env.run("c.length").asInt() == 5);
+}
+
+// === String Format Operator ===
+
+TEST_CASE("Format float with %%", "[evaluator][format]") {
+    TestEnv env;
+    CHECK(env.run("(\"%.2f\" % 3.14159)").asString() == "3.14");
+    CHECK(env.run("(\"%.0f\" % 59.99)").asString() == "60");
+}
+
+TEST_CASE("Format integer with %%", "[evaluator][format]") {
+    TestEnv env;
+    CHECK(env.run("(\"%d\" % 42)").asString() == "42");
+    CHECK(env.run("(\"%04d\" % 7)").asString() == "0007");
+}
+
+TEST_CASE("Format hex with %%", "[evaluator][format]") {
+    TestEnv env;
+    CHECK(env.run("(\"%x\" % 255)").asString() == "ff");
+    CHECK(env.run("(\"%X\" % 255)").asString() == "FF");
+}
+
+TEST_CASE("Format string with %%", "[evaluator][format]") {
+    TestEnv env;
+    CHECK(env.run("(\"%s\" % \"hello\")").asString() == "hello");
+    CHECK(env.run("(\"%-10s\" % \"hi\")").asString() == "hi        ");
+}
+
+TEST_CASE("Format int as float", "[evaluator][format]") {
+    TestEnv env;
+    // Int should be promoted to float for %f
+    CHECK(env.run("(\"%.1f\" % 42)").asString() == "42.0");
+}
+
+// === sort_by ===
+
+TEST_CASE("Array sort_by with comparator", "[evaluator][sort_by]") {
+    TestEnv env;
+    env.run("set arr [3 1 4 1 5]");
+    env.run("{arr.sort_by fn [a b] (a < b)}");
+    auto result = env.run("arr");
+    auto& arr = result.asArray();
+    CHECK(arr[0].asInt() == 1);
+    CHECK(arr[1].asInt() == 1);
+    CHECK(arr[2].asInt() == 3);
+    CHECK(arr[3].asInt() == 4);
+    CHECK(arr[4].asInt() == 5);
+}
+
+TEST_CASE("Array sort_by descending", "[evaluator][sort_by]") {
+    TestEnv env;
+    env.run("set arr [3 1 4 1 5]");
+    env.run("{arr.sort_by fn [a b] (a > b)}");
+    auto result = env.run("arr");
+    auto& arr = result.asArray();
+    CHECK(arr[0].asInt() == 5);
+    CHECK(arr[1].asInt() == 4);
+    CHECK(arr[2].asInt() == 3);
+    CHECK(arr[3].asInt() == 1);
+    CHECK(arr[4].asInt() == 1);
+}
+
+// === Integration tests combining features ===
+
+TEST_CASE("Map literal used as widget config", "[evaluator][integration]") {
+    TestEnv env;
+    // Simulate a widget factory using named params + map literals + defaults
+    env.run(R"(
+        fn make_button [label =size 24 =color "white"] do
+            {=type :button =label label =size size =color color}
+        end
+    )");
+    env.run("set btn {make_button \"OK\" =color \"green\"}");
+    CHECK(env.run("btn.label").asString() == "OK");
+    CHECK(env.run("btn.size").asInt() == 24);
+    CHECK(env.run("btn.color").asString() == "green");
+}
+
+TEST_CASE("Null coalesce with map field access", "[evaluator][integration]") {
+    TestEnv env;
+    env.run("set opts {=x 10}");
+    // opts.y is nil (not set), so ?? provides default
+    CHECK(env.run("(opts.y ?? 99)").asInt() == 99);
+    CHECK(env.run("(opts.x ?? 99)").asInt() == 10);
+}
+
+TEST_CASE("Array concat for widget children", "[evaluator][integration]") {
+    TestEnv env;
+    env.run("set header [{=type :text =label \"Title\"}]");
+    env.run("set body [{=type :button =label \"OK\"}]");
+    env.run("set all (header + body)");
+    CHECK(env.run("all.length").asInt() == 2);
+    CHECK(env.run("all[0].label").asString() == "Title");
+    CHECK(env.run("all[1].label").asString() == "OK");
+}
+
+TEST_CASE("Format in string interpolation context", "[evaluator][integration]") {
+    TestEnv env;
+    env.run("set fps 59.7834");
+    // % is infix — pre-compute then interpolate
+    env.run("set label (\"%.1f\" % fps)");
+    auto result = env.run("\"FPS: {label}\"");
+    CHECK(result.asString() == "FPS: 59.8");
+}
+
+TEST_CASE("Format with parens in interpolation", "[evaluator][integration]") {
+    TestEnv env;
+    env.run("set fps 59.7834");
+    // % inside parens works within interpolation
+    auto result = env.run("\"FPS: {(\"%.1f\" % fps)}\"");
+    CHECK(result.asString() == "FPS: 59.8");
+}

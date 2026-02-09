@@ -16,6 +16,8 @@ class NativeFunctionObject;
 /// Script closure (function + captured scope).
 struct Closure {
     std::vector<uint32_t> paramIds;           // interned parameter names
+    size_t numRequired = 0;                   // number of required params (without defaults)
+    std::vector<const struct AstNode*> defaultExprs; // defaults for params[numRequired..]
     const struct AstNode* body = nullptr;     // raw pointer into AST
     std::shared_ptr<const struct AstNode> astRoot; // keeps AST alive
     std::shared_ptr<class Scope> capturedScope;
