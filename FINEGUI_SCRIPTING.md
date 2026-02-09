@@ -420,14 +420,14 @@ WidgetNode convertToWidget(const finescript::Value& map,
 
     // Wrap script closures as C++ callbacks
     if (auto v = map.mapGet("on_click"); v.isCallable()) {
-        node.onClick = [&engine, closure = v](WidgetNode& w) {
-            engine.call(closure, {});  // invoke script closure
+        node.onClick = [&engine, &ctx, closure = v](WidgetNode& w) {
+            engine.callFunction(closure, {}, ctx);
         };
     }
     if (auto v = map.mapGet("on_change"); v.isCallable()) {
-        node.onChange = [&engine, closure = v](WidgetNode& w) {
+        node.onChange = [&engine, &ctx, closure = v](WidgetNode& w) {
             // Pass the new value back to the script
-            engine.call(closure, {widgetValueToScriptValue(w)});
+            engine.callFunction(closure, {widgetValueToScriptValue(w)}, ctx);
         };
     }
 
@@ -937,6 +937,10 @@ end
 
 ### Build System
 
+- **finescript**: Shared library (`libfinescript.so` / `libfinescript.dylib`).
+  Built with `BUILD_SHARED_LIBS=ON` (the default). Pass `-DBUILD_SHARED_LIBS=OFF`
+  to produce a static library instead. Provides CMake install targets and an
+  exported `finescript::finescript` target for `find_package()` / `target_link_libraries()`.
 - **finegui-retained**: New library target, depends only on finegui (Dear ImGui)
 - **finegui-script**: New library target, depends on finegui-retained + finescript
 - Both are optional — finegui core works without them
