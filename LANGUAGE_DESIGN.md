@@ -533,15 +533,16 @@ apply_to_all items player.damage # argument position → function passed as call
 
 ### Distinguishing Methods from Data
 
-When storing functions in a map, use `setMethod` to mark them as methods
-(receive `self` on dot-call). Use `set` for plain data fields, including
-function values that should NOT receive `self`.
+Any closure whose first parameter is named `self` is **automatically detected
+as a method** when stored in a map — via map literals (`{=key fn}`),
+`set obj.field fn`, or `m.set :key fn`. Methods receive `self` on dot-call.
+Plain functions (first param not named `self`) do NOT receive `self`.
 
 ```
 set obj {map}
 obj.set :name "button"                          # data field
 obj.set :on_click fn [event] do print event end # stored function, NOT a method
-obj.setMethod :describe fn [self] do            # method — dot-call injects self
+set obj.describe fn [self] do                   # method — first param is self
     print self.name
 end
 
@@ -550,6 +551,9 @@ set f {obj.get :on_click}     # get the raw function
 {f :click_event}               # call without self
 ```
 
+`setMethod` is still available to explicitly mark any function as a method,
+even if the first parameter isn't named `self`.
+
 ### Objects Are Just Dictionaries
 
 There is no class system. An "object" is a map that happens to have some
@@ -557,17 +561,14 @@ method entries. A "class" is a factory function that builds such maps.
 
 ```
 fn make_enemy [hp speed] do
-    set e {map}
-    e.set :health hp
-    e.set :speed speed
-    e.set :alive true
-    e.setMethod :damage fn [self amount] do
+    set e {=health hp =speed speed =alive true}
+    set e.damage fn [self amount] do
         set self.health (self.health - amount)
         if (self.health <= 0) do
             set self.alive false
         end
     end
-    e.setMethod :is_alive fn [self] do
+    set e.is_alive fn [self] do
         return self.alive
     end
     return e
@@ -643,10 +644,10 @@ end
 
 ### Dictionaries and Objects Are the Same
 
-A map with method entries (via `setMethod`) is an "object." A map without
-method entries is a "dictionary." There is no structural difference. The
-only distinction is whether fields are marked as methods for self-injection
-during dot-call.
+A map with method entries is an "object." A map without method entries is a
+"dictionary." There is no structural difference. The only distinction is
+whether fields are marked as methods (auto-detected when first param is `self`,
+or explicitly via `setMethod`) for self-injection during dot-call.
 
 ---
 
@@ -1256,7 +1257,7 @@ fn make_panel [children] do
     p.set :type :panel
     p.set :layout :vertical
     p.set :children children
-    p.setMethod :add fn [self child] do
+    set p.add fn [self child] do
         self.children.push child
     end
     return p

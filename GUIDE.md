@@ -462,22 +462,23 @@ The `map` built-in also still works: `{map :name "Alice" :age 30}`.
 
 ## Objects and Methods
 
-Objects are just maps with methods. Use `setMethod` to mark a function as a
-method --- it will automatically receive the object as its first argument
-(`self`) when called with dot notation.
+Objects are just maps with methods. Any closure whose first parameter is named
+`self` is **automatically detected as a method** when stored in a map --- via
+map literals, `set obj.field`, or `m.set :key`. Methods automatically receive
+the object as their first argument (`self`) when called with dot notation.
 
 ```
 fn makeEnemy [hp speed] do
     set e {=health hp =speed speed =alive true}
 
-    e.setMethod :damage fn [self amount] do
+    set e.damage fn [self amount] do
         set self.health (self.health - amount)
         if (self.health <= 0) do
             set self.alive false
         end
     end
 
-    e.setMethod :isAlive fn [self] self.alive
+    set e.isAlive fn [self] self.alive
 
     return e
 end
@@ -488,13 +489,21 @@ print goblin.health           # 40
 print {goblin.isAlive}        # true
 ```
 
+You can also define methods inline in map literals:
+
+```
+set obj {=hp 100 =damage fn [self amt] do
+    set self.hp (self.hp - amt)
+end}
+obj.damage 30
+print obj.hp                  # 70
+```
+
 ### Methods vs Data
 
-- `set` stores a value (data field or plain function)
-- `setMethod` stores a function and marks it as a method
-
-Only methods get `self` auto-injected on dot-call. Regular functions stored
-in a map do not.
+- Closures with first param `self` → auto-detected as methods
+- Closures without `self` first param → stored as plain functions (no self-injection)
+- `setMethod` still works to explicitly mark any function as a method (even if first param isn't named `self`)
 
 ---
 
@@ -566,6 +575,23 @@ The `%` operator on strings does printf-style formatting:
 ("%04x" % 255)               # "00ff"
 ```
 
+For multiple values, pass an array on the right side:
+
+```
+("%d/%d" % [50 100])         # "50/100"
+("%s has %d HP" % ["Goblin" 50])  # "Goblin has 50 HP"
+```
+
+Use `%%` in the format string for a literal `%`: `("%d%%" % 42)` produces `"42%"`.
+
+Alternatively, use the `format` built-in function for a prefix-style multi-arg call:
+
+```
+format "%d/%d" hp max_hp
+format "%s: %.1f" "FPS" fps
+"Health: {format \"%d/%d\" hp max_hp}"  # works in interpolation
+```
+
 Supported specifiers: `%d`, `%i`, `%f`, `%e`, `%g`, `%x`, `%X`, `%o`, `%s`.
 Integers auto-promote to float for `%f`.
 
@@ -609,6 +635,7 @@ Prefix form also works: `{?? x "default"}` and `{?: x "default"}`.
 | `str_find s needle` | Find index (-1 if not found) |
 | `str_upper s` | Uppercase |
 | `str_lower s` | Lowercase |
+| `format fmt a b ...` | Printf-style multi-arg formatting |
 
 ### Type Conversion
 

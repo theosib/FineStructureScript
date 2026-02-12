@@ -388,3 +388,65 @@ TEST_CASE("Builtins: math in expressions", "[builtins][e2e]") {
     CHECK(r.success);
     CHECK(r.returnValue.asInt() == 8);
 }
+
+// ============================================================
+// Format builtin
+// ============================================================
+
+TEST_CASE("Builtins: format basic two ints", "[builtins][format]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    auto r = run(engine, ctx, "format \"%d/%d\" 10 20");
+    CHECK(r.success);
+    CHECK(r.returnValue.asString() == "10/20");
+}
+
+TEST_CASE("Builtins: format mixed types", "[builtins][format]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    auto r = run(engine, ctx, "format \"%s: %d\" \"HP\" 100");
+    CHECK(r.success);
+    CHECK(r.returnValue.asString() == "HP: 100");
+}
+
+TEST_CASE("Builtins: format float precision", "[builtins][format]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    auto r = run(engine, ctx, "format \"%.2f x %.2f\" 1.5 2.75");
+    CHECK(r.success);
+    CHECK(r.returnValue.asString() == "1.50 x 2.75");
+}
+
+TEST_CASE("Builtins: format with literal text", "[builtins][format]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    auto r = run(engine, ctx, "format \"(%d, %d)\" 10 20");
+    CHECK(r.success);
+    CHECK(r.returnValue.asString() == "(10, 20)");
+}
+
+TEST_CASE("Builtins: format single arg", "[builtins][format]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    auto r = run(engine, ctx, "format \"%04x\" 255");
+    CHECK(r.success);
+    CHECK(r.returnValue.asString() == "00ff");
+}
+
+TEST_CASE("Builtins: format escaped percent", "[builtins][format]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    auto r = run(engine, ctx, "format \"%d%%\" 42");
+    CHECK(r.success);
+    CHECK(r.returnValue.asString() == "42%");
+}
+
+TEST_CASE("Builtins: format in string interpolation", "[builtins][format]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    run(engine, ctx, "set hp 50");
+    run(engine, ctx, "set max_hp 100");
+    auto r = run(engine, ctx, "\"Health: {format \"%d/%d\" hp max_hp}\"");
+    CHECK(r.success);
+    CHECK(r.returnValue.asString() == "Health: 50/100");
+}

@@ -4,6 +4,7 @@
 #include "finescript/value.h"
 #include "finescript/map_data.h"
 #include "finescript/interner.h"
+#include "finescript/format_util.h"
 #include <cmath>
 #include <algorithm>
 #include <random>
@@ -196,6 +197,14 @@ void registerStringBuiltins(ScriptEngine& engine) {
         std::string result = args[0].asString();
         for (auto& c : result) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         return Value::string(std::move(result));
+    });
+
+    // format "fmt" arg1 arg2 ... — multi-arg printf-style formatting
+    engine.registerFunction("format", [](ExecutionContext& ctx, const std::vector<Value>& args) -> Value {
+        if (args.empty() || !args[0].isString()) return Value::nil();
+        const auto& fmt = args[0].asString();
+        std::vector<Value> fmtArgs(args.begin() + 1, args.end());
+        return Value::string(formatMulti(fmt, fmtArgs, &ctx.engine().interner()));
     });
 }
 

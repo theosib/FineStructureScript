@@ -28,8 +28,11 @@ public:
     bool remove(uint32_t key);
     std::vector<uint32_t> keys() const;
 
-    /// Mark a key as a method (auto-passes self on dot-call).
+    /// Store a value and mark the key as a method (auto-passes self on dot-call).
     void setMethod(uint32_t key, Value funcValue);
+
+    /// Mark an existing key as a method (without changing the stored value).
+    void markMethod(uint32_t key);
 
     /// Check if a key is marked as a method.
     bool isMethod(uint32_t key) const;

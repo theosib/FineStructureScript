@@ -46,8 +46,12 @@ private:
     uint32_t sym_substr_, sym_find_, sym_upper_, sym_lower_, sym_trim_;
     uint32_t sym_starts_with_, sym_ends_with_, sym_char_at_;
     uint32_t sym_sort_by_;
+    uint32_t sym_self_;
 
     void preInternSymbols();
+
+    /// Check if a value is a closure whose first parameter is named "self".
+    bool isAutoMethod(const Value& val) const;
 
     Value evalIntLit(const AstNode& node);
     Value evalFloatLit(const AstNode& node);

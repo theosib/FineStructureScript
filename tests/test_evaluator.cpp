@@ -602,6 +602,80 @@ TEST_CASE("Eval setMethod and method call with self", "[evaluator]") {
     CHECK(env.run("obj.getName").asString() == "Alice");
 }
 
+// === Auto-method detection (first param named "self") ===
+
+TEST_CASE("Auto-method detection in map literal", "[evaluator]") {
+    TestEnv env;
+    // Closure with first param "self" should be auto-detected as method
+    env.run(R"(
+        set obj {=name "Alice" =greet fn [self] "Hi, {self.name}"}
+    )");
+    CHECK(env.run("obj.greet").asString() == "Hi, Alice");
+}
+
+TEST_CASE("Auto-method detection via set dotted", "[evaluator]") {
+    TestEnv env;
+    env.run("set obj {=hp 100}");
+    // Set a closure with first param "self" via dotted set
+    env.run("set obj.damage fn [self amt] (self.hp - amt)");
+    // Should auto-detect as method, self injected
+    CHECK(env.run("obj.damage 30").asInt() == 70);
+}
+
+TEST_CASE("Auto-method detection via map.set", "[evaluator]") {
+    TestEnv env;
+    env.run("set obj {=name \"Bob\"}");
+    env.run("obj.set :getName fn [self] self.name");
+    CHECK(env.run("obj.getName").asString() == "Bob");
+}
+
+TEST_CASE("No auto-method when first param is not self", "[evaluator]") {
+    TestEnv env;
+    env.run("set obj {=val 42 =getVal fn [x] x}");
+    // Not a method — no self param, so no auto-injection
+    CHECK(env.run("obj.getVal 99").asInt() == 99);
+}
+
+TEST_CASE("Auto-method in factory function pattern", "[evaluator]") {
+    TestEnv env;
+    env.run(R"(
+        fn makePet [name sound] do
+            set pet {=name name =sound sound}
+            set pet.speak fn [self] "{self.name} says {self.sound}"
+            return pet
+        end
+    )");
+    env.run("set dog {makePet \"Rex\" \"Woof\"}");
+    CHECK(env.run("dog.speak").asString() == "Rex says Woof");
+}
+
+TEST_CASE("Auto-method with multiple methods on one object", "[evaluator]") {
+    TestEnv env;
+    env.run(R"(
+        set counter {=n 0}
+        set counter.inc fn [self] do set self.n (self.n + 1); self.n end
+        set counter.value fn [self] self.n
+        set counter.add fn [self amt] do set self.n (self.n + amt); self.n end
+    )");
+    CHECK(env.run("counter.value").asInt() == 0);
+    CHECK(env.run("counter.inc").asInt() == 1);
+    CHECK(env.run("counter.inc").asInt() == 2);
+    CHECK(env.run("counter.add 10").asInt() == 12);
+}
+
+TEST_CASE("Explicit setMethod still works alongside auto-method", "[evaluator]") {
+    TestEnv env;
+    // setMethod should still work for functions without self param
+    auto mapData = std::make_shared<MapData>();
+    uint32_t nameSym = env.interner.intern("name");
+    mapData->set(nameSym, Value::string("Eve"));
+    env.globalScope->define(env.interner.intern("obj"), Value::map(mapData));
+
+    env.run("fn myMethod [me] me.name");
+    env.run("obj.setMethod :myMethod myMethod");
+    CHECK(env.run("obj.myMethod").asString() == "Eve");
+}
+
 // === Array methods ===
 
 TEST_CASE("Eval array length", "[evaluator]") {
@@ -1393,3 +1467,30 @@ TEST_CASE("Format with parens in interpolation", "[evaluator][integration]") {
     auto result = env.run("\"FPS: {(\"%.1f\" % fps)}\"");
     CHECK(result.asString() == "FPS: 59.8");
 }
+
+// === Multi-arg format ===
+
+TEST_CASE("Format % with array — two ints", "[evaluator][format]") {
+    TestEnv env;
+    auto result = env.run("(\"%d/%d\" % [10 20])");
+    CHECK(result.asString() == "10/20");
+}
+
+TEST_CASE("Format % with array — mixed types", "[evaluator][format]") {
+    TestEnv env;
+    auto result = env.run("(\"%s has %d HP (%.1f%%)\" % [\"Goblin\" 50 75.5])");
+    CHECK(result.asString() == "Goblin has 50 HP (75.5%)");
+}
+
+TEST_CASE("Format % with array — literal percent %%", "[evaluator][format]") {
+    TestEnv env;
+    auto result = env.run("(\"%d%%\" % [42])");
+    CHECK(result.asString() == "42%");
+}
+
+TEST_CASE("Format % with array — single element same as scalar", "[evaluator][format]") {
+    TestEnv env;
+    auto result = env.run("(\"%.2f\" % [3.14159])");
+    CHECK(result.asString() == "3.14");
+}
+

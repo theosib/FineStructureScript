@@ -6,9 +6,9 @@
 #include "finescript/map_data.h"
 #include "finescript/execution_context.h"
 #include "finescript/script_engine.h"
+#include "finescript/format_util.h"
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 
 namespace finescript {
 
@@ -49,6 +49,13 @@ void Evaluator::preInternSymbols() {
     sym_ends_with_ = interner_.intern("ends_with");
     sym_char_at_ = interner_.intern("char_at");
     sym_sort_by_ = interner_.intern("sort_by");
+    sym_self_ = interner_.intern("self");
+}
+
+bool Evaluator::isAutoMethod(const Value& val) const {
+    if (!val.isClosure()) return false;
+    auto& closure = const_cast<Value&>(val).asClosure();
+    return !closure.paramIds.empty() && closure.paramIds[0] == sym_self_;
 }
 
 // -- Main dispatch --
@@ -435,6 +442,10 @@ Value Evaluator::evalMapLit(const AstNode& node, std::shared_ptr<Scope> scope,
         uint32_t sym = interner_.intern(node.nameParts[i]);
         Value val = eval(*node.children[i], scope, ctx);
         map.set(sym, val);
+        // Auto-detect methods: closures with first param named "self"
+        if (isAutoMethod(val)) {
+            map.markMethod(sym);
+        }
     }
 
     return mapVal;
@@ -475,6 +486,10 @@ Value Evaluator::evalSet(const AstNode& node, std::shared_ptr<Scope> scope,
         }
         uint32_t lastSym = interner_.intern(node.nameParts.back());
         current.asMap().set(lastSym, val);
+        // Auto-detect methods: closures with first param named "self"
+        if (isAutoMethod(val)) {
+            current.asMap().markMethod(lastSym);
+        }
     }
 
     return val;
@@ -787,7 +802,12 @@ Value Evaluator::dispatchBuiltinMethod(const Value& object, uint32_t methodSym,
         if (methodSym == sym_set_) {
             if (args.size() < 2) throw ScriptError("map.set requires key and value arguments", loc);
             if (!args[0].isSymbol()) throw ScriptError("Map key must be a symbol", loc);
-            map.set(args[0].asSymbol(), args[1]);
+            uint32_t key = args[0].asSymbol();
+            map.set(key, args[1]);
+            // Auto-detect methods: closures with first param named "self"
+            if (isAutoMethod(args[1])) {
+                map.markMethod(key);
+            }
             return args[1];
         }
         if (methodSym == sym_has_) {
@@ -1168,46 +1188,16 @@ Value Evaluator::applyBinOp(const std::string& op, const Value& left, const Valu
         return Value::array(std::move(result));
     }
 
-    // String format with % (printf-style: "%.2f" % 3.14)
+    // String format with % (printf-style)
+    // Single value: "%.2f" % 3.14
+    // Multiple values: "%d/%d" % [10 20]
     if (op == "%" && left.isString()) {
         const auto& fmt = left.asString();
-        if (fmt.empty() || fmt[0] != '%') {
-            throw ScriptError("Format string must start with '%'", loc);
+        if (right.isArray()) {
+            return Value::string(formatMulti(fmt, right.asArray(), &interner_));
         }
-        // Find the conversion specifier (last character)
-        char spec = fmt.back();
-        char buf[256];
-        int n = 0;
-        switch (spec) {
-            case 'd': case 'i': {
-                int64_t v = right.isInt() ? right.asInt() :
-                            right.isFloat() ? static_cast<int64_t>(right.asFloat()) : 0;
-                n = snprintf(buf, sizeof(buf), fmt.c_str(), v);
-                break;
-            }
-            case 'f': case 'e': case 'g':
-            case 'F': case 'E': case 'G': {
-                double v = right.isFloat() ? right.asFloat() :
-                           right.isInt() ? static_cast<double>(right.asInt()) : 0.0;
-                n = snprintf(buf, sizeof(buf), fmt.c_str(), v);
-                break;
-            }
-            case 'x': case 'X': case 'o': {
-                int64_t v = right.isInt() ? right.asInt() :
-                            right.isFloat() ? static_cast<int64_t>(right.asFloat()) : 0;
-                n = snprintf(buf, sizeof(buf), fmt.c_str(), v);
-                break;
-            }
-            case 's': {
-                std::string s = right.isString() ? right.asString() : right.toString(&interner_);
-                n = snprintf(buf, sizeof(buf), fmt.c_str(), s.c_str());
-                break;
-            }
-            default:
-                throw ScriptError("Unknown format specifier: %" + std::string(1, spec), loc);
-        }
-        if (n < 0) throw ScriptError("Format error", loc);
-        return Value::string(std::string(buf, static_cast<size_t>(std::min(n, (int)(sizeof(buf) - 1)))));
+        // Single value — use formatMulti with a one-element vector
+        return Value::string(formatMulti(fmt, {right}, &interner_));
     }
 
     // Arithmetic and comparison (numeric)

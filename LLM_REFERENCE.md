@@ -69,7 +69,7 @@ return val
 int/int division truncates. Mixed int/float promotes to float. `+` concatenates strings and arrays.
 `and`/`or` short-circuit. `..` exclusive range, `..=` inclusive range (both produce arrays).
 `??` null coalesce: returns left unless nil, then evaluates right. `?:` falsy coalesce: returns left unless falsy.
-`%` on strings: format operator — `("%.2f" % 3.14)` → `"3.14"` (snprintf-style).
+`%` on strings: format operator — `("%.2f" % 3.14)` → `"3.14"`. Multi-arg: `("%d/%d" % [10 20])` → `"10/20"`.
 `+` on arrays: concatenation — `([1 2] + [3 4])` → `[1 2 3 4]` (new array).
 Both `??` and `?:` also work as prefix verbs: `{?? expr fallback}`, `{?: expr fallback}`.
 
@@ -107,15 +107,16 @@ Methods: `.get :key` `.set :key val` `.has :key` `.remove :key` `.keys` `.values
 
 ## Objects
 
-Maps with methods. `setMethod` marks a function as a method; dot-call auto-injects receiver as first arg (`self`).
+Maps with methods. **Auto-detection**: any closure whose first parameter is named `self` is automatically marked as a method when stored in a map (via map literal, `set obj.field`, or `m.set :key`). Dot-call auto-injects receiver as first arg (`self`).
 
 ```
-set obj {=hp 100}
-obj.setMethod :damage fn [self amt] do
+set obj {=hp 100 =damage fn [self amt] do
     set self.hp (self.hp - amt)
-end
+end}
 obj.damage 10         # self=obj injected automatically
 ```
+
+`setMethod` still works for closures where the first param isn't named `self`.
 
 Factory functions serve as constructors. No class system.
 
@@ -137,7 +138,7 @@ Executes in current scope (definitions persist).
 
 Math: `abs` `min` `max` `floor` `ceil` `round` `sqrt` `pow` `sin` `cos` `tan` `random` `random_range lo hi` `random_float`
 
-String: `str_length` `str_concat a b ...` `str_substr s start [len]` `str_find s needle` `str_upper` `str_lower`
+String: `str_length` `str_concat a b ...` `str_substr s start [len]` `str_find s needle` `str_upper` `str_lower` `format fmt args...`
 
 Type: `to_int` `to_float` `to_str` `to_bool` `type`
 
@@ -153,7 +154,7 @@ Map: `map :k1 v1 :k2 v2 ...`
 # Factory function (constructor pattern)
 fn makeThing [x y] do
     set t {=x x =y y}
-    t.setMethod :move fn [self dx dy] do
+    set t.move fn [self dx dy] do
         set self.x (self.x + dx)
         set self.y (self.y + dy)
     end
@@ -195,6 +196,8 @@ set all (base_items + extra_items)
 
 # String formatting
 set label ("%.1f" % fps)
+set hud ("%d/%d" % [hp max_hp])
+set msg {format "%s has %d HP" name hp}
 
 # Iterate map
 for k in {m.keys} do

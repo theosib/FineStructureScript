@@ -48,6 +48,10 @@ void MapData::setMethod(uint32_t key, Value funcValue) {
     methodKeys_.insert(key);
 }
 
+void MapData::markMethod(uint32_t key) {
+    methodKeys_.insert(key);
+}
+
 bool MapData::isMethod(uint32_t key) const {
     return methodKeys_.count(key) > 0;
 }
