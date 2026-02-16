@@ -226,6 +226,43 @@ Named parameters can appear in any order after positional arguments.
 
 Without explicit `return`, a function returns its last expression.
 
+### Variadic Parameters
+
+Use `[name]` inside the parameter list to collect remaining positional arguments
+into an array, and `{name}` to collect unmatched named arguments into a map:
+
+```
+# Collect all positional args
+fn sum [[nums]] do
+    set total 0
+    for n in nums do
+        set total (total + n)
+    end
+    total
+end
+print {sum 1 2 3 4 5}         # 15
+
+# Required params + rest
+fn log [level [msgs]] do
+    for m in msgs do
+        print "[{level}] {m}"
+    end
+end
+log "WARN" "disk full" "retry in 5s"
+
+# Collect unmatched named args into a map
+fn create [type {opts}] do
+    print "Creating {type}"
+    for k in {opts.keys} do
+        print "  {k} = {opts.get k}"
+    end
+end
+create "button" =label "OK" =size 24
+```
+
+`[rest]` and `{kwargs}` must come after all regular and default parameters.
+Both produce empty collections if no excess arguments are provided.
+
 ### Closures
 
 Functions capture their defining scope. This enables stateful closures:
@@ -732,6 +769,10 @@ engine.registerFunction("give_gold",
 engine.registerConstant("MAX_HEALTH", Value::integer(100));
 ```
 
+When a script calls a native function with named arguments (e.g., `give_gold 100 =source "quest"`),
+the named args are collected into a map and appended as the last positional argument. The native
+function receives `args = [100, {source: "quest"}]`.
+
 ### Context Variables
 
 ```cpp
@@ -773,6 +814,30 @@ auto result = engine.execute(*script, ctx);
 
 // Scripts are cached by path; reload on file change:
 engine.invalidateCache("path/to/script.fsc");
+```
+
+### Resource Finder
+
+By default, `source "path"` treats the argument as a literal filesystem path. You can
+plug in a custom resource finder to resolve logical names (e.g., `"blocks/torch"`) to
+actual paths — useful for mod directories, asset bundles, or search paths.
+
+```cpp
+class MyResourceFinder : public finescript::ResourceFinder {
+public:
+    std::filesystem::path resolve(std::string_view name) override {
+        // Search mod directories, asset bundles, etc.
+        auto path = modsDir_ / (std::string(name) + ".fsc");
+        if (std::filesystem::exists(path)) return path;
+        return {};  // empty = not found
+    }
+private:
+    std::filesystem::path modsDir_ = "mods/scripts";
+};
+
+MyResourceFinder finder;
+engine.setResourceFinder(&finder);
+// Now: source "blocks/torch"  →  resolves via finder  →  loads mods/scripts/blocks/torch.fsc
 ```
 
 ---

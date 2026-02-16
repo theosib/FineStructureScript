@@ -362,6 +362,33 @@ TEST_CASE("Builtins: map field access", "[builtins][map]") {
     CHECK(run(engine, ctx, "m.y").returnValue.asInt() == 20);
 }
 
+TEST_CASE("Builtins: map constructor with named args", "[builtins][map]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    auto r = run(engine, ctx, "set m {map =name \"Alice\" =age 30}\nm.name");
+    CHECK(r.success);
+    CHECK(r.returnValue.asString() == "Alice");
+}
+
+TEST_CASE("Builtins: map constructor named args field access", "[builtins][map]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    run(engine, ctx, "set m {map =x 10 =y 20}");
+    CHECK(run(engine, ctx, "m.x").returnValue.asInt() == 10);
+    CHECK(run(engine, ctx, "m.y").returnValue.asInt() == 20);
+}
+
+TEST_CASE("Builtins: map constructor mixed positional and named args", "[builtins][map]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    run(engine, ctx, "set m {map :a 1 =b 2}");
+    CHECK(run(engine, ctx, "m.a").returnValue.asInt() == 1);
+    CHECK(run(engine, ctx, "m.b").returnValue.asInt() == 2);
+}
+
 // ============================================================
 // End-to-end with builtins
 // ============================================================

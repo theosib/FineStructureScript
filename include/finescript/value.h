@@ -22,6 +22,11 @@ struct Closure {
     std::shared_ptr<const struct AstNode> astRoot; // keeps AST alive
     std::shared_ptr<class Scope> capturedScope;
     std::string name;                         // empty if anonymous
+    // Variadic params
+    uint32_t restParamId = 0;                 // [rest] param symbol, 0 = none
+    bool hasRestParam = false;
+    uint32_t kwargsParamId = 0;               // {kwargs} param symbol, 0 = none
+    bool hasKwargsParam = false;
 };
 
 /// The universal value type in finescript.

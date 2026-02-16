@@ -4,6 +4,7 @@
 #include "finescript/interner.h"
 #include "finescript/error.h"
 #include "finescript/map_data.h"
+#include "finescript/resource_finder.h"
 #include <fstream>
 #include <filesystem>
 
@@ -613,4 +614,188 @@ TEST_CASE("Integration: set global.x updates global from function", "[integratio
     auto r = run(engine, ctx, "counter");
     CHECK(r.success);
     CHECK(r.returnValue.asInt() == 3);
+}
+
+// === Native function kwargs ===
+
+TEST_CASE("Integration: native function receives kwargs map as last arg", "[integration][native-kwargs]") {
+    ScriptEngine engine;
+    // Native function that returns its last arg (should be kwargs map)
+    engine.registerFunction("get_kwargs",
+        [](ExecutionContext&, const std::vector<Value>& args) -> Value {
+            if (args.empty()) return Value::nil();
+            return args.back();
+        });
+
+    ExecutionContext ctx(engine);
+    auto r = run(engine, ctx, "get_kwargs =x 10 =y 20");
+    CHECK(r.success);
+    CHECK(r.returnValue.isMap());
+    auto& map = r.returnValue.asMap();
+    CHECK(map.has(ctx.engine().intern("x")));
+    CHECK(map.has(ctx.engine().intern("y")));
+    CHECK(map.get(ctx.engine().intern("x")).asInt() == 10);
+    CHECK(map.get(ctx.engine().intern("y")).asInt() == 20);
+}
+
+TEST_CASE("Integration: native function kwargs with positional args", "[integration][native-kwargs]") {
+    ScriptEngine engine;
+    // Native function: args[0] is positional, args[1] is kwargs map
+    engine.registerFunction("mixed_args",
+        [](ExecutionContext&, const std::vector<Value>& args) -> Value {
+            // Return array of [positional, kwargs_map]
+            std::vector<Value> result;
+            for (auto& a : args) result.push_back(a);
+            return Value::array(std::move(result));
+        });
+
+    ExecutionContext ctx(engine);
+    auto r = run(engine, ctx, "mixed_args 42 =color \"red\"");
+    CHECK(r.success);
+    CHECK(r.returnValue.isArray());
+    auto& arr = r.returnValue.asArray();
+    CHECK(arr.size() == 2);
+    CHECK(arr[0].asInt() == 42);
+    CHECK(arr[1].isMap());
+    auto& map = const_cast<Value&>(arr[1]).asMap();
+    CHECK(map.get(ctx.engine().intern("color")).asString() == "red");
+}
+
+TEST_CASE("Integration: native function with no named args gets no kwargs map", "[integration][native-kwargs]") {
+    ScriptEngine engine;
+    engine.registerFunction("count_args",
+        [](ExecutionContext&, const std::vector<Value>& args) -> Value {
+            return Value::integer(static_cast<int64_t>(args.size()));
+        });
+
+    ExecutionContext ctx(engine);
+    auto r = run(engine, ctx, "count_args 1 2 3");
+    CHECK(r.success);
+    CHECK(r.returnValue.asInt() == 3);  // No kwargs map appended
+}
+
+TEST_CASE("Integration: native function in map receives kwargs via method call", "[integration][native-kwargs]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    // Register a native function, store in a map, call via dot notation
+    engine.registerFunction("make_kwargs_receiver",
+        [](ExecutionContext&, const std::vector<Value>& args) -> Value {
+            if (args.empty()) return Value::nil();
+            return args.back();  // Return last arg (kwargs map)
+        });
+
+    auto r = run(engine, ctx, R"(
+        set obj {=handler make_kwargs_receiver}
+        obj.handler =width 100 =height 200
+    )");
+    INFO("Error: " << r.error);
+    CHECK(r.success);
+    CHECK(r.returnValue.isMap());
+    auto& map = r.returnValue.asMap();
+    CHECK(map.get(ctx.engine().intern("width")).asInt() == 100);
+    CHECK(map.get(ctx.engine().intern("height")).asInt() == 200);
+}
+
+// === Resource Finder ===
+
+namespace {
+class TestResourceFinder : public ResourceFinder {
+public:
+    void addMapping(std::string name, std::filesystem::path path) {
+        mappings_[std::move(name)] = std::move(path);
+    }
+
+    std::filesystem::path resolve(std::string_view name) override {
+        auto it = mappings_.find(std::string(name));
+        if (it != mappings_.end()) return it->second;
+        return {};  // empty = not found
+    }
+
+private:
+    std::unordered_map<std::string, std::filesystem::path> mappings_;
+};
+}
+
+TEST_CASE("Integration: source with resource finder resolves names", "[integration][resource-finder]") {
+    auto tmpDir = std::filesystem::temp_directory_path();
+    auto tmpFile = tmpDir / "test_rf_lib.script";
+    {
+        std::ofstream out(tmpFile);
+        out << "set rf_var 99\n";
+    }
+
+    TestResourceFinder finder;
+    finder.addMapping("mylib", tmpFile);
+
+    ScriptEngine engine;
+    engine.setResourceFinder(&finder);
+    ExecutionContext ctx(engine);
+
+    auto result = run(engine, ctx, "source \"mylib\"");
+    CHECK(result.success);
+
+    result = run(engine, ctx, "rf_var");
+    CHECK(result.success);
+    CHECK(result.returnValue.asInt() == 99);
+
+    std::filesystem::remove(tmpFile);
+}
+
+TEST_CASE("Integration: source without resource finder uses literal path", "[integration][resource-finder]") {
+    auto tmpDir = std::filesystem::temp_directory_path();
+    auto tmpFile = tmpDir / "test_rf_literal.script";
+    {
+        std::ofstream out(tmpFile);
+        out << "set literal_var 77\n";
+    }
+
+    ScriptEngine engine;
+    // No resource finder set — should use path as-is
+    ExecutionContext ctx(engine);
+
+    auto result = run(engine, ctx, "source \"" + tmpFile.string() + "\"");
+    CHECK(result.success);
+
+    result = run(engine, ctx, "literal_var");
+    CHECK(result.success);
+    CHECK(result.returnValue.asInt() == 77);
+
+    std::filesystem::remove(tmpFile);
+}
+
+TEST_CASE("Integration: source with resource finder — not found", "[integration][resource-finder]") {
+    TestResourceFinder finder;
+    // No mappings added
+
+    ScriptEngine engine;
+    engine.setResourceFinder(&finder);
+    ExecutionContext ctx(engine);
+
+    auto result = run(engine, ctx, "source \"nonexistent\"");
+    CHECK_FALSE(result.success);
+    CHECK(result.error.find("Cannot resolve script") != std::string::npos);
+}
+
+TEST_CASE("Integration: resource finder with function definition", "[integration][resource-finder]") {
+    auto tmpDir = std::filesystem::temp_directory_path();
+    auto tmpFile = tmpDir / "test_rf_fn.script";
+    {
+        std::ofstream out(tmpFile);
+        out << "fn rf_multiply [a b] (a * b)\n";
+    }
+
+    TestResourceFinder finder;
+    finder.addMapping("math/multiply", tmpFile);
+
+    ScriptEngine engine;
+    engine.setResourceFinder(&finder);
+    ExecutionContext ctx(engine);
+
+    run(engine, ctx, "source \"math/multiply\"");
+    auto result = run(engine, ctx, "rf_multiply 6 7");
+    CHECK(result.success);
+    CHECK(result.returnValue.asInt() == 42);
+
+    std::filesystem::remove(tmpFile);
 }

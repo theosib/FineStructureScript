@@ -6,6 +6,7 @@
 #include "finescript/parser.h"
 #include "finescript/native_function.h"
 #include "finescript/builtins.h"
+#include "finescript/resource_finder.h"
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
@@ -16,6 +17,7 @@ struct ScriptEngine::Impl {
     std::unique_ptr<DefaultInterner> ownedInterner;
     Interner* interner = nullptr;
     std::shared_ptr<Scope> globalScope;
+    ResourceFinder* resourceFinder = nullptr;
 
     struct CachedScript {
         std::unique_ptr<CompiledScript> script;
@@ -136,6 +138,17 @@ void ScriptEngine::registerFunction(std::string_view name,
 
 void ScriptEngine::registerConstant(std::string_view name, Value value) {
     impl_->globalScope->define(intern(name), std::move(value));
+}
+
+void ScriptEngine::setResourceFinder(ResourceFinder* finder) {
+    impl_->resourceFinder = finder;
+}
+
+std::filesystem::path ScriptEngine::resolveScript(std::string_view name) {
+    if (impl_->resourceFinder) {
+        return impl_->resourceFinder->resolve(name);
+    }
+    return std::filesystem::path(name);
 }
 
 void ScriptEngine::setInterner(Interner* interner) {

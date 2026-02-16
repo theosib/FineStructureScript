@@ -628,15 +628,51 @@ private:
         std::vector<std::unique_ptr<AstNode>> defaults;
         int numRequired = 0;
         bool seenOptional = false;
+        std::string restName;
+        std::string kwargsName;
+        bool seenRest = false;
+        bool seenKwargs = false;
 
         while (lexer_.peek().type != TokenType::RightBracket) {
-            if (lexer_.peek().type == TokenType::KeyName) {
+            if (seenKwargs) {
+                throw std::runtime_error(
+                    "No parameters allowed after {kwargs} collector");
+            }
+            if (lexer_.peek().type == TokenType::LeftBracket) {
+                // [rest] — variadic positional args collector
+                if (seenRest) {
+                    throw std::runtime_error("Only one [rest] parameter allowed");
+                }
+                lexer_.next(); // consume [
+                auto p = expect(TokenType::Name, "Expected rest parameter name");
+                expect(TokenType::RightBracket, "Expected ']' after rest parameter name");
+                restName = p.text;
+                seenRest = true;
+            } else if (lexer_.peek().type == TokenType::LeftBrace) {
+                // {kwargs} — variadic named args collector
+                if (seenKwargs) {
+                    throw std::runtime_error("Only one {kwargs} parameter allowed");
+                }
+                lexer_.next(); // consume {
+                auto p = expect(TokenType::Name, "Expected kwargs parameter name");
+                expect(TokenType::RightBrace, "Expected '}' after kwargs parameter name");
+                kwargsName = p.text;
+                seenKwargs = true;
+            } else if (lexer_.peek().type == TokenType::KeyName) {
                 // Optional param with default: =name default_value
+                if (seenRest) {
+                    throw std::runtime_error(
+                        "Default parameters must come before [rest] collector");
+                }
                 seenOptional = true;
                 auto keyTok = lexer_.next();
                 params.push_back(keyTok.text);
                 defaults.push_back(parseAtom());
             } else {
+                if (seenRest) {
+                    throw std::runtime_error(
+                        "Required parameters must come before [rest] collector");
+                }
                 if (seenOptional) {
                     throw std::runtime_error(
                         "Required parameters must come before optional parameters");
@@ -660,6 +696,7 @@ private:
 
         // Build Fn node: children[0] = body, children[1..] = default exprs
         // intValue = numRequired, nameParts = all param names
+        // op = "restName|kwargsName" for variadic params (pipe-delimited)
         auto n = std::make_unique<AstNode>();
         n->kind = AstNodeKind::Fn;
         n->loc = loc;
@@ -671,6 +708,9 @@ private:
         n->children.push_back(std::move(body));
         for (auto& def : defaults) {
             n->children.push_back(std::move(def));
+        }
+        if (!restName.empty() || !kwargsName.empty()) {
+            n->op = restName + "|" + kwargsName;
         }
         return n;
     }

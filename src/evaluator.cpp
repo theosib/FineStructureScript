@@ -285,6 +285,15 @@ Value Evaluator::evalCall(const AstNode& node, std::shared_ptr<Scope> scope,
                     auto& closure = func.asClosure();
                     return callClosureWithNamed(closure, std::move(args), std::move(namedArgs), ctx, node.loc);
                 }
+                // Named arg dispatch for native functions: collect into kwargs map
+                if (numNamed > 0 && func.isNativeFunction()) {
+                    auto namedArgs = evalNamedArgs();
+                    auto kwargsMap = Value::map();
+                    for (auto& [sym, val] : namedArgs) {
+                        kwargsMap.asMap().set(sym, std::move(val));
+                    }
+                    args.push_back(std::move(kwargsMap));
+                }
                 return callFunction(func, std::move(args), scope, ctx, node.loc);
             }
         }
@@ -315,6 +324,16 @@ Value Evaluator::evalCall(const AstNode& node, std::shared_ptr<Scope> scope,
         auto namedArgs = evalNamedArgs();
         auto& closure = const_cast<Value&>(verb).asClosure();
         return callClosureWithNamed(closure, std::move(args), std::move(namedArgs), ctx, node.loc);
+    }
+
+    // Named arg dispatch for native functions: collect into kwargs map
+    if (numNamed > 0 && verb.isNativeFunction()) {
+        auto namedArgs = evalNamedArgs();
+        auto kwargsMap = Value::map();
+        for (auto& [sym, val] : namedArgs) {
+            kwargsMap.asMap().set(sym, std::move(val));
+        }
+        args.push_back(std::move(kwargsMap));
     }
 
     return callFunction(verb, std::move(args), scope, ctx, node.loc);
@@ -524,6 +543,27 @@ Value Evaluator::evalFn(const AstNode& node, std::shared_ptr<Scope> scope) {
         closure->defaultExprs.push_back(node.children[i].get());
     }
 
+    // Variadic params: op = "restName|kwargsName" (pipe-delimited)
+    if (!node.op.empty()) {
+        auto pipe = node.op.find('|');
+        if (pipe == std::string::npos) {
+            // rest only (no pipe)
+            closure->hasRestParam = true;
+            closure->restParamId = interner_.intern(node.op);
+        } else {
+            std::string restName = node.op.substr(0, pipe);
+            std::string kwargsName = node.op.substr(pipe + 1);
+            if (!restName.empty()) {
+                closure->hasRestParam = true;
+                closure->restParamId = interner_.intern(restName);
+            }
+            if (!kwargsName.empty()) {
+                closure->hasKwargsParam = true;
+                closure->kwargsParamId = interner_.intern(kwargsName);
+            }
+        }
+    }
+
     Value closureVal = Value::closure(closure);
 
     // Named function: define in current scope
@@ -664,7 +704,11 @@ Value Evaluator::evalSource(const AstNode& node, std::shared_ptr<Scope> scope,
         throw ScriptError("source requires a string filename", node.loc);
     }
 
-    auto* compiled = engine_->loadScript(filenameVal.asString());
+    auto resolved = engine_->resolveScript(filenameVal.asString());
+    if (resolved.empty()) {
+        throw ScriptError("Cannot resolve script: " + filenameVal.asString(), node.loc);
+    }
+    auto* compiled = engine_->loadScript(resolved);
 
     // Execute in the current scope (like bash source)
     auto prevRoot = currentAstRoot_;
@@ -715,6 +759,19 @@ Value Evaluator::callClosure(Closure& closure, std::vector<Value> args,
         }
     }
 
+    // Collect remaining positional args into [rest] array
+    if (closure.hasRestParam) {
+        std::vector<Value> restArgs;
+        for (size_t i = closure.paramIds.size(); i < args.size(); i++) {
+            restArgs.push_back(args[i]);
+        }
+        callScope->define(closure.restParamId, Value::array(std::move(restArgs)));
+    }
+    // No named args in this path, but define empty map for consistency
+    if (closure.hasKwargsParam) {
+        callScope->define(closure.kwargsParamId, Value::map());
+    }
+
     // Evaluate body, catching ReturnSignal at function boundary
     try {
         return eval(*closure.body, callScope, ctx);
@@ -728,6 +785,9 @@ Value Evaluator::callClosureWithNamed(Closure& closure, std::vector<Value> posAr
                                        ExecutionContext* ctx, SourceLocation /*callSite*/) {
     auto callScope = closure.capturedScope->createChild();
 
+    // Track which named args get matched to regular params
+    std::vector<bool> namedArgUsed(namedArgs.size(), false);
+
     for (size_t i = 0; i < closure.paramIds.size(); i++) {
         if (i < posArgs.size()) {
             // Positionally provided
@@ -735,9 +795,10 @@ Value Evaluator::callClosureWithNamed(Closure& closure, std::vector<Value> posAr
         } else {
             // Check named args
             bool found = false;
-            for (auto& [sym, val] : namedArgs) {
-                if (sym == closure.paramIds[i]) {
-                    callScope->define(closure.paramIds[i], val);
+            for (size_t j = 0; j < namedArgs.size(); j++) {
+                if (namedArgs[j].first == closure.paramIds[i]) {
+                    callScope->define(closure.paramIds[i], namedArgs[j].second);
+                    namedArgUsed[j] = true;
                     found = true;
                     break;
                 }
@@ -754,6 +815,26 @@ Value Evaluator::callClosureWithNamed(Closure& closure, std::vector<Value> posAr
                 }
             }
         }
+    }
+
+    // Collect remaining positional args into [rest] array
+    if (closure.hasRestParam) {
+        std::vector<Value> restArgs;
+        for (size_t i = closure.paramIds.size(); i < posArgs.size(); i++) {
+            restArgs.push_back(posArgs[i]);
+        }
+        callScope->define(closure.restParamId, Value::array(std::move(restArgs)));
+    }
+
+    // Collect unmatched named args into {kwargs} map
+    if (closure.hasKwargsParam) {
+        auto kwargsMap = Value::map();
+        for (size_t j = 0; j < namedArgs.size(); j++) {
+            if (!namedArgUsed[j]) {
+                kwargsMap.asMap().set(namedArgs[j].first, namedArgs[j].second);
+            }
+        }
+        callScope->define(closure.kwargsParamId, kwargsMap);
     }
 
     try {

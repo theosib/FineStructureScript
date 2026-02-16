@@ -38,6 +38,8 @@ fn name [params] body          # named
 fn [params] body               # anonymous
 fn name [params] do ... end    # multi-line
 fn name [req =opt default] body  # with default parameter values
+fn name [req [rest]] body      # variadic positional (rest = array)
+fn name [req [rest] {opts}] body # variadic positional + named (opts = map)
 ```
 Last expression is return value. `return val` for early exit (non-local jump).
 Closures capture defining scope by reference. Defaults evaluated at call time.
@@ -46,6 +48,9 @@ Closures capture defining scope by reference. Defaults evaluated at call time.
 
 Named parameters at call site: `{func posArg =name1 val1 =name2 val2}`.
 Named args matched to param names; unmatched params get defaults or nil.
+**Native functions**: named args are collected into a map and appended as the last positional argument.
+
+**Variadic params**: `[rest]` collects remaining positional args into an array. `{kwargs}` collects unmatched named args into a map. Both must come after all regular/default params. Empty array/map if no excess args.
 
 ## Control Flow
 
@@ -199,6 +204,23 @@ set label ("%.1f" % fps)
 set hud ("%d/%d" % [hp max_hp])
 set msg {format "%s has %d HP" name hp}
 
+# Variadic function
+fn sum [[nums]] do
+    set total 0
+    for n in nums do set total (total + n) end
+    total
+end
+sum 1 2 3 4 5                 # 15
+
+# Flexible config with kwargs
+fn create [type {opts}] do
+    set obj {=type type}
+    for k in {opts.keys} do
+        obj.set k {opts.get k}
+    end
+    obj
+end
+
 # Iterate map
 for k in {m.keys} do
     print k {m.get k}
@@ -265,6 +287,11 @@ for (auto& handler : ctx.eventHandlers()) {
 
 // Custom interner
 engine.setInterner(&myInterner);
+
+// Resource finder: resolve logical script names to filesystem paths
+// Subclass finescript::ResourceFinder, implement resolve(string_view) → path
+engine.setResourceFinder(&myFinder);
+// Now `source "blocks/torch"` goes through the finder
 ```
 
 Library: `libfinescript.so`/`.dylib` (shared). CMake target: `finescript`. Namespace: `finescript`.

@@ -365,6 +365,56 @@ print {apply double 5}       # → 10
 print {apply fn [x] (x + 1) 5}   # → 6
 ```
 
+### Variadic Parameters
+
+Functions can collect variable-length argument lists using special syntax
+in the parameter list:
+
+- `[name]` (brackets around a name) collects remaining positional args into
+  an array
+- `{name}` (braces around a name) collects unmatched named args into a map
+
+```
+# Collect all positional args into an array
+fn sum [[nums]] do
+    set total 0
+    for n in nums do
+        set total (total + n)
+    end
+    return total
+end
+
+print {sum 1 2 3 4 5}         # → 15
+
+# Required param + rest args
+fn log [level [messages]] do
+    for msg in messages do
+        print "[{level}] {msg}"
+    end
+end
+
+log "WARN" "disk full" "retry in 5s"
+
+# Collect unmatched named args into a map
+fn create [type {opts}] do
+    # type gets the first positional arg
+    # opts gets all named args as a map
+    print "Creating {type}"
+end
+
+create "button" =label "OK" =size 24
+# type = "button", opts = {=label "OK" =size 24}
+```
+
+**Ordering rules**: required params → optional params (with defaults) →
+`[rest]` → `{kwargs}`. At most one of each. Both produce empty
+collections when no excess arguments are provided.
+
+**Native functions and named args**: When a native function (C++ registered
+function) is called with named arguments, the evaluator collects all named
+args into a map and appends it as the last positional argument. This lets
+native functions receive configuration options without special dispatch.
+
 ### Return
 
 `return` is a special case among the language's built-in forms. Unlike
@@ -1083,6 +1133,13 @@ efficient. User-defined functions have no special syntax.
 `source "lib.script"` executes the sourced file in the **current scope**,
 like bash's `source` command. Functions and variables defined in the sourced
 file become visible to the sourcer.
+
+**Resource resolution**: If a `ResourceFinder` is configured on the
+`ScriptEngine`, the string passed to `source` is resolved through it before
+loading. This lets host applications map logical names (e.g.,
+`source "blocks/torch"`) to actual filesystem paths via mod directories,
+asset bundles, or search paths. Without a finder, the string is treated as
+a literal path.
 
 #### Error Position Tracking
 

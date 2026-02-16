@@ -13,6 +13,7 @@ namespace finescript {
 class Interner;
 class Scope;
 class ExecutionContext;
+class ResourceFinder;
 
 struct CompiledScript {
     std::shared_ptr<AstNode> root;
@@ -54,6 +55,10 @@ public:
     void registerFunction(std::string_view name,
                           std::function<Value(ExecutionContext&, const std::vector<Value>&)> func);
     void registerConstant(std::string_view name, Value value);
+
+    // Resource finder
+    void setResourceFinder(ResourceFinder* finder);
+    std::filesystem::path resolveScript(std::string_view name);
 
     // Interner
     void setInterner(Interner* interner);

@@ -1263,6 +1263,113 @@ TEST_CASE("Default params evaluated at call time", "[evaluator][defaults]") {
     CHECK(env.run("{next_id 99}").asInt() == 99);
 }
 
+// === Variadic Arguments ===
+
+TEST_CASE("Rest param only", "[evaluator][variadic]") {
+    TestEnv env;
+    env.run("fn collect [[args]] args");
+    auto result = env.run("{collect 1 2 3}");
+    CHECK(result.isArray());
+    CHECK(result.asArray().size() == 3);
+    CHECK(result.asArray()[0].asInt() == 1);
+    CHECK(result.asArray()[1].asInt() == 2);
+    CHECK(result.asArray()[2].asInt() == 3);
+}
+
+TEST_CASE("Rest param with no excess args", "[evaluator][variadic]") {
+    TestEnv env;
+    env.run("fn collect [[args]] args");
+    auto result = env.run("{collect}");
+    CHECK(result.isArray());
+    CHECK(result.asArray().empty());
+}
+
+TEST_CASE("Required + rest param", "[evaluator][variadic]") {
+    TestEnv env;
+    env.run("fn head_rest [x [rest]] rest");
+    auto result = env.run("{head_rest 1 2 3 4}");
+    CHECK(result.isArray());
+    CHECK(result.asArray().size() == 3);
+    CHECK(result.asArray()[0].asInt() == 2);
+}
+
+TEST_CASE("Required + default + rest param", "[evaluator][variadic]") {
+    TestEnv env;
+    env.run("fn mixed [x =y 10 [rest]] do\n  set r [x y]; r\nend");
+    CHECK(env.run("{mixed 1}").asArray()[0].asInt() == 1);
+    CHECK(env.run("{mixed 1}").asArray()[1].asInt() == 10);
+
+    env.run("fn get_rest [x =y 10 [rest]] rest");
+    auto result = env.run("{get_rest 1 2 3 4}");
+    CHECK(result.isArray());
+    CHECK(result.asArray().size() == 2);
+    CHECK(result.asArray()[0].asInt() == 3);
+    CHECK(result.asArray()[1].asInt() == 4);
+}
+
+TEST_CASE("Kwargs param only", "[evaluator][variadic]") {
+    TestEnv env;
+    env.run("fn opts [{opts}] opts");
+    auto result = env.run("{opts =a 1 =b 2}");
+    CHECK(result.isMap());
+    uint32_t a = env.interner.intern("a");
+    uint32_t b = env.interner.intern("b");
+    CHECK(result.asMap().get(a).asInt() == 1);
+    CHECK(result.asMap().get(b).asInt() == 2);
+}
+
+TEST_CASE("Kwargs param with no excess named args", "[evaluator][variadic]") {
+    TestEnv env;
+    env.run("fn opts [{opts}] opts");
+    auto result = env.run("{opts}");
+    CHECK(result.isMap());
+    CHECK(result.asMap().keys().empty());
+}
+
+TEST_CASE("Required + kwargs — named args matched to params excluded from kwargs", "[evaluator][variadic]") {
+    TestEnv env;
+    env.run("fn foo [x {opts}] do\n  set r [x opts]; r\nend");
+    auto result = env.run("{foo =x 42 =color 5}");
+    CHECK(result.asArray()[0].asInt() == 42);
+    auto kw = result.asArray()[1];
+    CHECK(kw.isMap());
+    uint32_t color = env.interner.intern("color");
+    CHECK(kw.asMap().get(color).asInt() == 5);
+    // x should NOT be in kwargs since it matched the regular param
+    uint32_t x = env.interner.intern("x");
+    CHECK(kw.asMap().has(x) == false);
+}
+
+TEST_CASE("Rest + kwargs together", "[evaluator][variadic]") {
+    TestEnv env;
+    env.run("fn both [x [rest] {opts}] do\n  set r [x rest opts]; r\nend");
+    auto result = env.run("{both 1 2 3 =color 5}");
+    CHECK(result.asArray()[0].asInt() == 1);
+    auto rest = result.asArray()[1];
+    CHECK(rest.isArray());
+    CHECK(rest.asArray().size() == 2);
+    CHECK(rest.asArray()[0].asInt() == 2);
+    auto opts = result.asArray()[2];
+    CHECK(opts.isMap());
+    uint32_t color = env.interner.intern("color");
+    CHECK(opts.asMap().get(color).asInt() == 5);
+}
+
+TEST_CASE("Variadic sum function", "[evaluator][variadic]") {
+    TestEnv env;
+    env.run(R"(
+        fn sum [[nums]] do
+            set total 0
+            for n in nums do
+                set total (total + n)
+            end
+            total
+        end
+    )");
+    CHECK(env.run("{sum 1 2 3 4 5}").asInt() == 15);
+    CHECK(env.run("{sum}").asInt() == 0);
+}
+
 // === Null Coalescing Operators ===
 
 TEST_CASE("Null coalesce ?? with nil", "[evaluator][coalesce]") {

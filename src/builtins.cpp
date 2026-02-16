@@ -271,8 +271,17 @@ void registerIOBuiltins(ScriptEngine& engine) {
 static void registerMapConstructor(ScriptEngine& engine) {
     engine.registerFunction("map", [](ExecutionContext&, const std::vector<Value>& args) -> Value {
         auto mapData = std::make_shared<MapData>();
-        // Expect pairs: :key1 val1 :key2 val2 ...
-        for (size_t i = 0; i + 1 < args.size(); i += 2) {
+        // Positional pairs: :key1 val1 :key2 val2 ...
+        size_t end = args.size();
+        // If last arg is a map (kwargs from named args), pull its entries
+        if (!args.empty() && args.back().isMap()) {
+            auto& kwargsMap = const_cast<Value&>(args.back()).asMap();
+            for (auto key : kwargsMap.keys()) {
+                mapData->set(key, kwargsMap.get(key));
+            }
+            end--;  // don't process kwargs map as positional pair
+        }
+        for (size_t i = 0; i + 1 < end; i += 2) {
             if (!args[i].isSymbol()) continue;
             mapData->set(args[i].asSymbol(), args[i + 1]);
         }
