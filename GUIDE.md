@@ -495,7 +495,8 @@ print a[0]                    # 1
 print a[-1]                   # 3 (negative = from end)
 
 # Properties and methods
-print {a.length}              # 3
+print {a.length}              # 3 (explicit braces)
+print a.length                # same thing — dot access in arg position
 a.push 4                      # [1 2 3 4]
 set last {a.pop}              # removes and returns 4
 
