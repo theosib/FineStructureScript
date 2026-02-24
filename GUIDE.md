@@ -35,6 +35,27 @@ Newlines separate statements. Semicolons work too: `set x 5; print x`.
 | Map | `{=x 10 =y 20}` | Symbol-keyed dictionary |
 | Function | `fn [x] (x * 2)` | First-class, closures |
 
+### Symbols
+
+Symbols are interned names — the fundamental unit of identity in finescript.
+
+- **Bare word** (`name`) — looked up in scope at runtime. If bound, evaluates
+  to the bound value. If unbound, evaluates to `nil`. If callable in call
+  position, it is automatically invoked.
+- **Symbol literal** (`:name`) — the colon is a *quoting* mechanism meaning
+  "this symbol literally, don't look it up." Used as map keys, event names,
+  type tags, etc.
+
+```
+set x 5
+print x           # looks up x → 5
+print y           # y is unbound → nil
+print :x          # the symbol :x itself, no lookup
+```
+
+All identifiers, operators like `+` and `-`, and most non-digit sequences are
+symbols at the token level. The evaluator resolves them by scope lookup.
+
 ### Truthiness
 
 Only `nil` and `false` are falsy. Everything else is truthy, including `0`,
@@ -87,6 +108,17 @@ set names ["Alice" "Bob"]
 set coords [x y (x + y)]     # expressions are evaluated
 ```
 
+### Ambiguity Rule
+
+A line beginning with a **bare word** is a single statement that consumes
+the rest of the line as arguments. A line beginning with `{` can be multiple
+independent brace-expressions:
+
+```
+verb {a} {b}         # ONE call: verb called with two args (results of a and b)
+{verb a} {verb b}    # TWO calls: verb(a), then verb(b)
+```
+
 ---
 
 ## Variables
@@ -133,6 +165,22 @@ print count                   # still 0
 ```
 
 Unbound names evaluate to `nil` rather than causing an error.
+
+### Scope Chain
+
+From innermost to outermost:
+
+1. **Current block** — inside `do...end`, function body, `if`, `for`, `while`
+2. **Enclosing function scopes** — captured lexically at closure definition time
+3. **Script scope** — top-level of the script file; persists for the lifetime
+   of the script's attachment (to a block, entity, etc.)
+4. **Context scope** — variables injected by the engine per-invocation (e.g.,
+   `player`, `world`, `target`, `self`)
+5. **Global scope** — built-in functions and engine-registered names
+
+`set` on a new name creates it in the current scope. `set` on an existing name
+updates it in the nearest scope where the name is defined. `let` always creates
+in the current scope regardless of outer bindings.
 
 ### The `global` Object
 
@@ -399,6 +447,11 @@ end
 ```
 
 `return` with no argument returns `nil`.
+
+Unlike most control flow, `return` both **evaluates** its argument and performs
+a **non-local jump**: it escapes the current scope chain back to the enclosing
+function boundary regardless of nesting depth (nested `if`, `for`, `do`, etc.).
+Script code cannot catch or intercept it — it is invisible to the script.
 
 ---
 
@@ -735,6 +788,137 @@ set result {set a 10; set b 20; (a + b)}
 
 ---
 
+## Language Reference
+
+### Macros vs Functions
+
+finescript has two categories of callable things:
+
+**Functions** — all arguments are evaluated before the call. User-defined
+functions (`fn`) and engine-registered native functions are all functions.
+
+**Macros** — arguments are passed as unevaluated AST nodes. The macro
+decides which to evaluate, which to treat as names, and which to store as
+code. There are exactly 10 built-in macros; user-defined macros are not
+supported.
+
+| Macro | Evaluation rules |
+|-------|-----------------|
+| `set` | arg1: name (unevaluated); arg2: evaluated and bound |
+| `let` | arg1: name (unevaluated); arg2: evaluated and bound locally |
+| `fn` | name: unevaluated; params: unevaluated; body: stored as code |
+| `if` | condition: evaluated; branches: deferred, only matching branch runs |
+| `for` | loop var: unevaluated; iterable: evaluated; body: re-evaluated per iteration |
+| `while` | condition and body: both re-evaluated each iteration |
+| `match` | scrutinee: evaluated; patterns: unevaluated; bodies: deferred |
+| `on` | event name: unevaluated; body: stored as closure for event registration |
+| `do` | all sub-expressions: evaluated sequentially in a shared scope |
+| `source` | filename: evaluated; file parsed and executed in current scope |
+
+`return` is a special case: it **evaluates** its argument (like a function)
+and performs a **non-local jump** to the enclosing function boundary (like
+no other construct). Script code cannot intercept it.
+
+### Formal Grammar
+
+```
+Program     → Statement*
+Statement   → Expr (';' Expr)* NEWLINE | DoBlock
+
+Expr        → Atom+
+Atom        → NUMBER | STRING | ':' SYMBOL | BOOL | NIL | '~' NAME
+            | '[' Atom* ']'
+            | '(' InfixExpr ')'
+            | '{' Statement+ '}'
+            | '=' NAME Atom              # named argument
+            | '{' ('=' NAME Atom)+ '}'  # map literal
+            | DoBlock
+            | DottedName
+
+DottedName  → NAME ('.' NAME)* ('[' Atom ']')?
+
+DoBlock     → 'do' NEWLINE Statement* 'end'
+
+InfixExpr   → UnaryExpr (BINOP UnaryExpr)*
+UnaryExpr   → 'not' UnaryExpr | '-' UnaryExpr | Atom
+
+BINOP       → '+' | '-' | '*' | '/' | '%' | '..' | '..='
+            | '<' | '>' | '<=' | '>=' | '==' | '!='
+            | 'and' | 'or' | '??' | '?:'
+```
+
+Parsing rules:
+1. Bare word first → single statement consuming rest of line as args.
+2. `{` first → one or more independent brace-expressions on the same line.
+3. Inside `{...}` → verb + args; semicolons separate multiple statements.
+4. Inside `(...)` → infix expression with standard precedence climbing.
+5. Inside `[...]` → space-separated atoms form an array.
+6. `do` keyword → reads lines until matching `end`.
+7. Dot notation → after any name, `.` chains member access.
+
+---
+
+## Implementation Notes
+
+These notes describe language semantics that are not always obvious from
+syntax alone.
+
+### Bare Names Auto-Call
+
+A callable value in statement position (or in the verb slot of a call) is
+**automatically invoked**. This means `double 5` calls `double`, and simply
+writing `greet` on a line calls `greet` with no arguments. Use `~name` to
+get a reference to the function without calling it:
+
+```
+greet              # calls greet()
+set f ~greet       # f = the function itself, not called
+{f}                # now call it
+```
+
+### For-Loop Closure Capture
+
+All closures created inside a `for` loop share the **same** loop variable
+(Python-style). The last iteration's value is what all closures see:
+
+```
+set fns []
+for i in 0..3 do
+    fns.push fn [] i
+end
+# All three functions return 2 (last value of i)
+```
+
+To capture per-iteration values, wrap in an immediately-invoked function:
+
+```
+for i in 0..3 do
+    fns.push {{fn [x] fn [] x} i}
+end
+```
+
+### Integer Division
+
+Integer divided by integer gives integer (truncated, like C):
+`(7 / 2)` → `3`. Mix a float to get float division: `(7.0 / 2)` → `3.5`.
+Mixed int/float operations promote to float: `(3 + 1.5)` → `4.5`.
+
+### Map Keys Are Symbols Only
+
+Map keys are always interned symbols (`uint32_t` IDs). There are no string
+or integer keys. `m.name` and `m.get :name` refer to the same symbol key.
+The `{=name val}` map literal syntax creates symbol-keyed entries.
+
+### Value Representation
+
+finescript values are `std::variant` with inline storage for small types
+(nil, bool, int, float, symbol) and reference-counted heap storage for
+complex types (string, array, map, closure, native function). Copying a
+value is cheap for small types and a refcount bump for complex ones — no
+garbage collector is needed.
+
+---
+
 ## C++ Embedding
 
 finescript is designed to be embedded in C++ applications. Here are the key
@@ -839,6 +1023,183 @@ MyResourceFinder finder;
 engine.setResourceFinder(&finder);
 // Now: source "blocks/torch"  →  resolves via finder  →  loads mods/scripts/blocks/torch.fsc
 ```
+
+### NativeFunctionObject — Stateful Native Functions
+
+For simple stateless operations, `registerFunction` with a lambda is
+sufficient. When a native function needs to hold state (references to engine
+systems, cached data, etc.) or share state across calls, subclass
+`NativeFunctionObject`:
+
+```cpp
+class WorldSetBlock : public finescript::NativeFunctionObject {
+public:
+    WorldSetBlock(World& world, UpdateScheduler& sched)
+        : world_(world), scheduler_(sched) {}
+
+    finescript::Value call(finescript::ExecutionContext& ctx,
+                           const std::vector<finescript::Value>& args) override {
+        BlockPos pos(args[0].asInt(), args[1].asInt(), args[2].asInt());
+        BlockTypeId type(args[3].asSymbol());
+        scheduler_.pushEvent(BlockEvent::placed(pos, type));
+        return finescript::Value::nil();
+    }
+private:
+    World& world_;
+    UpdateScheduler& scheduler_;
+};
+```
+
+Store instances in a map to create organized namespaces that scripts call
+via dot notation:
+
+```cpp
+auto worldObj = finescript::Value::map();
+worldObj.asMap().set(engine.intern("setBlock"),
+    finescript::Value::nativeFunction(
+        std::make_shared<WorldSetBlock>(world, scheduler)));
+worldObj.asMap().set(engine.intern("getBlock"),
+    finescript::Value::nativeFunction(
+        std::make_shared<WorldGetBlock>(world)));
+ctx.set("world", std::move(worldObj));
+
+// Script: world.setBlock 10 64 20 :stone
+```
+
+### ProxyMap — External Storage as a Dictionary
+
+A `ProxyMap` looks like a map to scripts but delegates every read and write
+to C++ code. This is ideal for exposing external storage (block data,
+entity state, config files, GUI widget state) without copying values in and
+out.
+
+```cpp
+class finescript::ProxyMap {
+public:
+    virtual ~ProxyMap() = default;
+    virtual Value get(uint32_t key) const = 0;
+    virtual void set(uint32_t key, Value value) = 0;
+    virtual bool has(uint32_t key) const = 0;
+    virtual bool remove(uint32_t key) = 0;
+    virtual std::vector<uint32_t> keys() const = 0;
+};
+```
+
+Example: wrapping a key-value store:
+
+```cpp
+class MyStoreProxy : public finescript::ProxyMap {
+public:
+    MyStoreProxy(MyStore& store, finescript::ScriptEngine& eng)
+        : store_(store), engine_(eng) {}
+
+    finescript::Value get(uint32_t key) const override {
+        auto name = engine_.lookupSymbol(key);
+        return store_.has(name)
+            ? finescript::Value::string(store_.get(name))
+            : finescript::Value::nil();
+    }
+    void set(uint32_t key, finescript::Value value) override {
+        store_.set(engine_.lookupSymbol(key), value.asString());
+    }
+    bool has(uint32_t key) const override {
+        return store_.has(engine_.lookupSymbol(key));
+    }
+    bool remove(uint32_t key) override {
+        return store_.remove(engine_.lookupSymbol(key));
+    }
+    std::vector<uint32_t> keys() const override {
+        std::vector<uint32_t> result;
+        for (auto& k : store_.keys())
+            result.push_back(engine_.intern(k));
+        return result;
+    }
+private:
+    MyStore& store_;
+    finescript::ScriptEngine& engine_;
+};
+
+// Expose as a context variable — scripts access it like a regular map:
+auto proxy = std::make_shared<MyStoreProxy>(store, engine);
+ctx.set("data", finescript::Value::proxyMap(proxy));
+
+// Script: set data.click_count (data.click_count + 1)
+```
+
+ProxyMap is how block/entity scripts can have persistent state backed by
+the engine's serialization system without any explicit copy-in/copy-out.
+
+### Pluggable Interner
+
+finescript ships with a `DefaultInterner` but accepts any implementation of
+the `Interner` interface. When all engine components share a single interner,
+symbol IDs are directly interchangeable — no mapping table needed:
+
+```cpp
+// Wrap your application's string interner:
+class MyInterner : public finescript::Interner {
+public:
+    explicit MyInterner(AppStringTable& table) : table_(table) {}
+    uint32_t intern(std::string_view str) override {
+        return table_.intern(str).id();
+    }
+    std::string_view lookup(uint32_t id) const override {
+        return table_.lookup(id);
+    }
+private:
+    AppStringTable& table_;
+};
+
+MyInterner interner(AppStringTable::instance());
+engine.setInterner(&interner);
+// Now `:stone` in a script and BlockTypeId::fromName("stone") share the same ID
+```
+
+The engine takes a non-owning pointer; the caller must ensure the interner
+outlives the `ScriptEngine`.
+
+### Error Handling
+
+```cpp
+auto result = engine.executeCommand("some script", ctx);
+if (!result.success) {
+    // result.error     — human-readable message
+    // result.errorLine — line number in the script
+    // Log and continue — script errors never crash the engine
+    log("[SCRIPT ERROR] {}:{}: {}", result.scriptName,
+        result.errorLine, result.error);
+}
+```
+
+Script errors throw `finescript::ScriptError` internally. `execute()` and
+`executeCommand()` catch it and return a failure result. The engine never
+propagates script errors as C++ exceptions to the caller.
+
+### Threading
+
+Scripts run on a single thread (whichever thread calls `execute()`). The
+engine is **not thread-safe** — do not call it from multiple threads
+concurrently. The AST cache requires no locking when accessed from a single
+thread.
+
+If scripts are always called from the same thread (e.g., a game logic
+thread), no synchronization is needed at all.
+
+### Hot Reload
+
+`loadScript()` checks the file timestamp on every call. If the file has
+changed since the last parse, it reparses automatically. No restart or
+explicit invalidation is needed during development:
+
+```cpp
+// Just call loadScript() as usual — stale cache is detected automatically
+auto* script = engine.loadScript("blocks/sign.fsc");
+engine.execute(*script, ctx);
+// If sign.fsc was edited, the above transparently uses the new version
+```
+
+For production, the AST cache can be pre-warmed or binary-serialized to
+skip the parse step entirely.
 
 ---
 
