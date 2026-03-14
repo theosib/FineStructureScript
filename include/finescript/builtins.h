@@ -13,5 +13,6 @@ void registerStringBuiltins(ScriptEngine& engine);
 void registerTypeBuiltins(ScriptEngine& engine);
 void registerIOBuiltins(ScriptEngine& engine);
 void registerCborBuiltins(ScriptEngine& engine);
+void registerConfigBuiltins(ScriptEngine& engine);
 
 } // namespace finescript

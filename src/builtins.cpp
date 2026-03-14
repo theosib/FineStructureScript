@@ -300,6 +300,7 @@ void registerBuiltins(ScriptEngine& engine) {
     registerIOBuiltins(engine);
     registerMapConstructor(engine);
     registerCborBuiltins(engine);
+    registerConfigBuiltins(engine);
 }
 
 } // namespace finescript
