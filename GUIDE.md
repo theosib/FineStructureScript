@@ -755,6 +755,35 @@ Prefix form also works: `{?? x "default"}` and `{?: x "default"}`.
 |----------|-------------|
 | `print a b ...` | Print space-separated values with newline |
 
+### CBOR Serialization
+
+| Function | Description |
+|----------|-------------|
+| `cbor_encode val` | Encode a value to CBOR binary (returned as a string) |
+| `cbor_decode str` | Decode a CBOR binary string back to a value |
+
+CBOR (Concise Binary Object Representation) is used for serializing data
+structures to a compact binary format — useful for network messages, save
+data, and cross-context data transfer.
+
+```
+set data {=name "Goblin" =hp 50 =items ["sword" "shield"]}
+set blob {cbor_encode data}        # binary string
+set copy {cbor_decode blob}        # deep copy of data
+print copy.name                    # "Goblin"
+```
+
+**Type mapping**: nil, bool, int, float, string, symbol, array, and map all
+round-trip faithfully. Symbols are preserved as a distinct type from strings.
+
+**Non-serializable values**: closures and native functions encode as `nil`.
+This means object methods are lost during serialization — only data survives.
+
+**Cycle detection**: if a data structure contains a reference cycle (e.g., an
+array that contains itself), `cbor_encode` throws an error. Diamond-shaped
+sharing (two references to the same array) is fine — it encodes each copy
+independently.
+
 ---
 
 ## Comments
@@ -1185,6 +1214,69 @@ thread.
 
 If scripts are always called from the same thread (e.g., a game logic
 thread), no synchronization is needed at all.
+
+### CBOR Serialization (C++ API)
+
+The CBOR module provides C++ functions for encoding and decoding finescript
+values to/from binary CBOR format. Include `finescript/cbor.h`.
+
+```cpp
+#include "finescript/cbor.h"
+
+// Encode a Value to binary CBOR
+finescript::Value data = /* ... */;
+std::vector<uint8_t> bytes = finescript::cborEncode(data, engine.interner());
+
+// Decode from binary CBOR
+finescript::Value restored = finescript::cborDecode(bytes, engine.interner());
+
+// Decode from raw pointer + length (e.g., from network)
+finescript::Value restored2 = finescript::cborDecode(ptr, length, engine.interner());
+```
+
+**Type mapping**:
+- Nil, Bool, Int, Float, String, Array, Map all round-trip faithfully
+- Symbol values use CBOR tag 22 to distinguish from strings
+- Map keys are serialized as text strings (re-interned on decode)
+- Closures and NativeFunctions encode as CBOR null (silently)
+- Cycle detection: throws `ScriptError` if the object graph has reference cycles
+
+This is the recommended way to transfer data between execution contexts or
+across the network. CBOR produces a deep copy that is free of shared
+references, scope captures, and proxy maps.
+
+### Cross-Context Value Transfer
+
+When moving finescript values between execution contexts, be aware of these
+safety considerations:
+
+**Safe to copy directly** (no serialization needed):
+- Primitive types: nil, bool, int, float, symbol (inline values, no sharing)
+- Data-only structures within the **same** ScriptEngine (same interner)
+
+**Unsafe to copy directly**:
+- **Different interners**: Symbol IDs (`uint32_t`) are interner-specific.
+  The same ID in two different interners maps to different strings. Copying a
+  map or symbol between engines with different interners silently corrupts key
+  meanings. Use CBOR serialization to transfer safely — it converts IDs to
+  strings and re-interns on decode.
+- **Shared mutation**: Copying a Value that contains arrays or maps only bumps
+  the reference count — both contexts share the same underlying storage.
+  Mutations in one context are visible in the other. Use CBOR round-tripping
+  (`cborDecode(cborEncode(val))`) for a deep copy.
+- **Closures**: A closure captures a `shared_ptr<Scope>` pointing into its
+  originating scope chain. Calling a closure from a different context will
+  read/write variables in the *original* scope, not the new one.
+- **NativeFunctions**: May capture C++ pointers or references to objects tied
+  to the originating context's lifetime. Moving them risks dangling references.
+- **ProxyMaps**: A proxy-backed map delegates to a `shared_ptr<ProxyMap>` that
+  typically wraps context-specific C++ storage. Moving the Value drags along
+  a reference to the original backing store.
+
+**Recommendation**: Use `cborEncode` / `cborDecode` to transfer data between
+contexts. This produces an independent deep copy with all symbols properly
+re-interned, and naturally strips non-data values (closures → nil, proxies
+→ regular map entries).
 
 ### Hot Reload
 

@@ -26,6 +26,7 @@ add_library(finescript
     src/execution_context.cpp
     src/script_engine.cpp
     src/builtins.cpp
+    src/cbor.cpp
 )
 target_include_directories(finescript PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

@@ -20,6 +20,7 @@ end
 - **String interpolation** — `"Hello {name}, you have {hp} HP"`
 - **Embeddable** — C++17 library, `ScriptEngine` + `ExecutionContext` API
 - **Pluggable** — custom `Interner`, `ResourceFinder`, `ProxyMap` interfaces
+- **CBOR serialization** — encode/decode values to binary for network, save data, cross-context transfer
 - **Hot reload** — AST cached by file timestamp, transparent reparse on change
 
 ## Building

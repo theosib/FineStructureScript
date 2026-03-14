@@ -17,6 +17,7 @@ set(TEST_SOURCES
     test_scope.cpp
     test_builtins.cpp
     test_integration.cpp
+    test_cbor.cpp
 )
 
 add_executable(finescript_tests ${TEST_SOURCES})

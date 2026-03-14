@@ -1,4 +1,5 @@
 #include "finescript/builtins.h"
+#include "finescript/cbor.h"
 #include "finescript/script_engine.h"
 #include "finescript/execution_context.h"
 #include "finescript/value.h"
@@ -298,6 +299,7 @@ void registerBuiltins(ScriptEngine& engine) {
     registerTypeBuiltins(engine);
     registerIOBuiltins(engine);
     registerMapConstructor(engine);
+    registerCborBuiltins(engine);
 }
 
 } // namespace finescript

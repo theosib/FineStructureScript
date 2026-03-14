@@ -153,6 +153,8 @@ I/O: `print a b ...`
 
 Map: `map :k1 v1 :k2 v2 ...`
 
+CBOR: `cbor_encode val` (→ binary string), `cbor_decode str` (→ value). Round-trips all data types. Closures/native functions → nil. Throws on cycles.
+
 ## Common Patterns
 
 ```
@@ -293,5 +295,23 @@ engine.setInterner(&myInterner);
 engine.setResourceFinder(&myFinder);
 // Now `source "blocks/torch"` goes through the finder
 ```
+
+### CBOR Serialization (C++)
+
+```cpp
+#include "finescript/cbor.h"
+auto bytes = finescript::cborEncode(value, engine.interner()); // Value → vector<uint8_t>
+auto val   = finescript::cborDecode(bytes, engine.interner()); // vector<uint8_t> → Value
+auto val2  = finescript::cborDecode(ptr, len, engine.interner()); // raw bytes → Value
+```
+Closures/NativeFunctions → null. Throws `ScriptError` on cycles. Symbols use CBOR tag 22.
+
+### Cross-Context Value Safety
+
+**Safe to copy directly**: primitives (nil, bool, int, float, symbol), data-only arrays/maps within same engine.
+
+**Unsafe**: different interners (symbol IDs mismatch), shared mutation (refcounted, not deep-copied), closures (capture original scope chain), NativeFunctions (may hold dangling C++ refs), ProxyMaps (tied to original backing store).
+
+**Use `cborEncode`/`cborDecode` to transfer data between contexts** — deep copies with proper re-interning, strips non-data values.
 
 Library: `libfinescript.so`/`.dylib` (shared). CMake target: `finescript`. Namespace: `finescript`.
