@@ -503,7 +503,9 @@ set last {a.pop}              # removes and returns 4
 # More methods
 a.get 0                       # 1
 a.set 0 99                    # [99 2 3]
-a.slice 1 3                   # [2 3]
+a.insert 1 50                 # [99 50 2 3] — insert 50 at index 1
+a.remove 2                    # [99 50 3] — remove element at index 2
+a.slice 1 3                   # [50 3]
 a.contains 2                  # true
 a.sort                        # in-place sort (natural order)
 a.sort_by fn [x y] (x > y)   # sort with custom comparator

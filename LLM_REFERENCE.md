@@ -92,6 +92,7 @@ a[-1]                 # negative index from end
 
 Methods (dot-call on array):
 - `.length` `.push elem` `.pop` `.get i` `.set i val`
+- `.insert i val` `.remove i`
 - `.slice start [end]` `.contains val` `.sort` `.sort_by fn`
 - `.map fn` `.filter fn` `.foreach fn`
 

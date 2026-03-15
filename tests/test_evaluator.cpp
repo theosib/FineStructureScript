@@ -758,6 +758,56 @@ TEST_CASE("Eval array foreach", "[evaluator]") {
     CHECK(env.run("total").asInt() == 6);
 }
 
+TEST_CASE("Eval array insert", "[evaluator]") {
+    TestEnv env;
+    env.run("set arr [1 2 3]");
+    env.run("arr.insert 1 99");
+    CHECK(env.run("arr.length").asInt() == 4);
+    CHECK(env.run("arr[0]").asInt() == 1);
+    CHECK(env.run("arr[1]").asInt() == 99);
+    CHECK(env.run("arr[2]").asInt() == 2);
+    CHECK(env.run("arr[3]").asInt() == 3);
+}
+
+TEST_CASE("Eval array insert at end", "[evaluator]") {
+    TestEnv env;
+    env.run("set arr [1 2]");
+    env.run("arr.insert 2 99");
+    CHECK(env.run("arr.length").asInt() == 3);
+    CHECK(env.run("arr[2]").asInt() == 99);
+}
+
+TEST_CASE("Eval array insert negative index", "[evaluator]") {
+    TestEnv env;
+    env.run("set arr [1 2 3]");
+    env.run("arr.insert -1 99");
+    CHECK(env.run("arr.length").asInt() == 4);
+    CHECK(env.run("arr[2]").asInt() == 99);
+    CHECK(env.run("arr[3]").asInt() == 3);
+}
+
+TEST_CASE("Eval array remove", "[evaluator]") {
+    TestEnv env;
+    env.run("set arr [10 20 30]");
+    CHECK(env.run("arr.remove 1").asInt() == 20);
+    CHECK(env.run("arr.length").asInt() == 2);
+    CHECK(env.run("arr[0]").asInt() == 10);
+    CHECK(env.run("arr[1]").asInt() == 30);
+}
+
+TEST_CASE("Eval array remove negative index", "[evaluator]") {
+    TestEnv env;
+    env.run("set arr [10 20 30]");
+    CHECK(env.run("arr.remove -1").asInt() == 30);
+    CHECK(env.run("arr.length").asInt() == 2);
+}
+
+TEST_CASE("Eval array remove out of bounds", "[evaluator]") {
+    TestEnv env;
+    env.run("set arr [1 2 3]");
+    CHECK_THROWS(env.run("arr.remove 5"));
+}
+
 // === Nested calls ===
 
 TEST_CASE("Eval nested function calls", "[evaluator]") {

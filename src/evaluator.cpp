@@ -856,7 +856,8 @@ bool Evaluator::isBuiltinArrayMethod(uint32_t sym) const {
     return sym == sym_length_ || sym == sym_push_ || sym == sym_pop_ ||
            sym == sym_get_ || sym == sym_set_ || sym == sym_slice_ ||
            sym == sym_contains_ || sym == sym_sort_ || sym == sym_sort_by_ ||
-           sym == sym_map_ || sym == sym_filter_ || sym == sym_foreach_;
+           sym == sym_map_ || sym == sym_filter_ || sym == sym_foreach_ ||
+           sym == sym_insert_ || sym == sym_remove_;
 }
 
 bool Evaluator::isBuiltinStringMethod(uint32_t sym) const {
@@ -966,6 +967,30 @@ Value Evaluator::dispatchBuiltinMethod(const Value& object, uint32_t methodSym,
             }
             arr[static_cast<size_t>(idx)] = args[1];
             return args[1];
+        }
+        if (methodSym == sym_insert_) {
+            if (args.size() < 2) throw ScriptError("array.insert requires index and value", loc);
+            if (!args[0].isInt()) throw ScriptError("Array index must be an integer", loc);
+            int64_t idx = args[0].asInt();
+            int64_t sz = static_cast<int64_t>(arr.size());
+            if (idx < 0) idx += sz;
+            if (idx < 0 || idx > sz) {
+                throw ScriptError("Array index out of bounds", loc);
+            }
+            arr.insert(arr.begin() + idx, args[1]);
+            return args[1];
+        }
+        if (methodSym == sym_remove_) {
+            if (args.empty()) throw ScriptError("array.remove requires an index", loc);
+            if (!args[0].isInt()) throw ScriptError("Array index must be an integer", loc);
+            int64_t idx = args[0].asInt();
+            if (idx < 0) idx += static_cast<int64_t>(arr.size());
+            if (idx < 0 || idx >= static_cast<int64_t>(arr.size())) {
+                throw ScriptError("Array index out of bounds", loc);
+            }
+            Value removed = arr[static_cast<size_t>(idx)];
+            arr.erase(arr.begin() + idx);
+            return removed;
         }
         if (methodSym == sym_slice_) {
             if (args.empty()) throw ScriptError("array.slice requires start index", loc);
