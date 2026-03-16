@@ -23,17 +23,17 @@ Newlines separate statements. Semicolons work too: `set x 5; print x`.
 
 ## Data Types
 
-| Type | Examples | Notes |
-|------|----------|-------|
-| Integer | `42`, `-7`, `0` | 64-bit signed |
-| Float | `3.14`, `-0.5` | Double precision |
-| String | `"hello"`, `"x={x}"` | Double-quoted, supports interpolation |
-| Boolean | `true`, `false` | |
-| Nil | `nil` | The absence of a value |
-| Symbol | `:stone`, `:interact` | Interned name, used as map keys |
-| Array | `[1 2 3]` | Ordered, heterogeneous |
-| Map | `{=x 10 =y 20}` | Symbol-keyed dictionary |
-| Function | `fn [x] (x * 2)` | First-class, closures |
+| Type     | Examples              | Notes                                 |
+| ----------| -----------------------| ---------------------------------------|
+| Integer  | `42`, `-7`, `0`       | 64-bit signed                         |
+| Float    | `3.14`, `-0.5`        | Double precision                      |
+| String   | `"hello"`, `"x={x}"`  | Double-quoted, supports interpolation |
+| Boolean  | `true`, `false`       |                                       |
+| Nil      | `nil`                 | The absence of a value                |
+| Symbol   | `:stone`, `:interact` | Interned name, used as map keys       |
+| Array    | `[1 2 3]`             | Ordered, heterogeneous                |
+| Map      | `{=x 10 =y 20}`       | Symbol-keyed dictionary               |
+| Function | `fn [x] (x * 2)`      | First-class, closures                 |
 
 ### Symbols
 
@@ -703,32 +703,34 @@ Prefix form also works: `{?? x "default"}` and `{?: x "default"}`.
 
 ### Math
 
-| Function | Description |
-|----------|-------------|
-| `abs x` | Absolute value |
-| `min a b` | Minimum |
-| `max a b` | Maximum |
-| `floor x` | Round down to integer |
-| `ceil x` | Round up to integer |
-| `round x` | Round to nearest integer |
-| `sqrt x` | Square root (returns float) |
-| `pow base exp` | Exponentiation |
-| `sin x`, `cos x`, `tan x` | Trigonometry (radians) |
-| `random` | Random integer |
-| `random_range lo hi` | Random integer in [lo, hi] |
-| `random_float` | Random float in [0, 1) |
+| Function                  | Description                 |
+| ---------------------------| -----------------------------|
+| `abs x`                   | Absolute value              |
+| `min a b`                 | Minimum                     |
+| `max a b`                 | Maximum                     |
+| `floor x`                 | Round down to integer       |
+| `ceil x`                  | Round up to integer         |
+| `round x`                 | Round to nearest integer    |
+| `sqrt x`                  | Square root (returns float) |
+| `pow base exp`            | Exponentiation              |
+| `sin x`, `cos x`, `tan x` | Trigonometry (radians)      |
+| `atan2 y x`              | Two-argument arctangent     |
+| `clamp x lo hi`          | Clamp x to [lo, hi]        |
+| `random`                  | Random integer              |
+| `random_range lo hi`      | Random integer in [lo, hi]  |
+| `random_float`            | Random float in [0, 1)      |
 
 ### String
 
-| Function | Description |
-|----------|-------------|
-| `str_length s` | String length |
-| `str_concat a b ...` | Concatenate (converts non-strings) |
-| `str_substr s start [len]` | Substring |
-| `str_find s needle` | Find index (-1 if not found) |
-| `str_upper s` | Uppercase |
-| `str_lower s` | Lowercase |
-| `format fmt a b ...` | Printf-style multi-arg formatting |
+| Function                   | Description                        |
+| ----------------------------| ------------------------------------|
+| `str_length s`             | String length                      |
+| `str_concat a b ...`       | Concatenate (converts non-strings) |
+| `str_substr s start [len]` | Substring                          |
+| `str_find s needle`        | Find index (-1 if not found)       |
+| `str_upper s`              | Uppercase                          |
+| `str_lower s`              | Lowercase                          |
+| `format fmt a b ...`       | Printf-style multi-arg formatting  |
 
 ### Type Conversion
 
@@ -737,6 +739,7 @@ Prefix form also works: `{?? x "default"}` and `{?: x "default"}`.
 | `to_int x` | Convert to integer |
 | `to_float x` | Convert to float |
 | `to_str x` | Convert to string |
+| `to_string x` | Convert to string (alias for `to_str`) |
 | `to_bool x` | Convert to boolean |
 | `type x` | Get type name ("int", "float", "string", etc.) |
 
@@ -759,10 +762,10 @@ Prefix form also works: `{?? x "default"}` and `{?: x "default"}`.
 
 ### CBOR Serialization
 
-| Function | Description |
-|----------|-------------|
+| Function          | Description                                          |
+| -------------------| ------------------------------------------------------|
 | `cbor_encode val` | Encode a value to CBOR binary (returned as a string) |
-| `cbor_decode str` | Decode a CBOR binary string back to a value |
+| `cbor_decode str` | Decode a CBOR binary string back to a value          |
 
 CBOR (Concise Binary Object Representation) is used for serializing data
 structures to a compact binary format — useful for network messages, save

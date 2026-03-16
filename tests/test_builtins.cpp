@@ -120,6 +120,36 @@ TEST_CASE("Builtins: sin cos tan", "[builtins][math]") {
     CHECK(run(engine, ctx, "tan 0").returnValue.asFloat() == Catch::Approx(0.0));
 }
 
+TEST_CASE("Builtins: atan2", "[builtins][math]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    CHECK(run(engine, ctx, "atan2 0 1").returnValue.asFloat() == Catch::Approx(0.0));
+    CHECK(run(engine, ctx, "atan2 1 0").returnValue.asFloat() == Catch::Approx(M_PI / 2.0));
+    CHECK(run(engine, ctx, "atan2 1 1").returnValue.asFloat() == Catch::Approx(M_PI / 4.0));
+}
+
+TEST_CASE("Builtins: clamp", "[builtins][math]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    // Integer clamping
+    CHECK(run(engine, ctx, "clamp 5 0 10").returnValue.asInt() == 5);
+    CHECK(run(engine, ctx, "clamp -3 0 10").returnValue.asInt() == 0);
+    CHECK(run(engine, ctx, "clamp 15 0 10").returnValue.asInt() == 10);
+    // Float clamping
+    CHECK(run(engine, ctx, "clamp 0.5 0.0 1.0").returnValue.asFloat() == Catch::Approx(0.5));
+    CHECK(run(engine, ctx, "clamp -1.0 0.0 1.0").returnValue.asFloat() == Catch::Approx(0.0));
+    CHECK(run(engine, ctx, "clamp 2.0 0.0 1.0").returnValue.asFloat() == Catch::Approx(1.0));
+}
+
+TEST_CASE("Builtins: to_string", "[builtins][type]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    CHECK(run(engine, ctx, "to_string 42").returnValue.asString() == "42");
+    CHECK(run(engine, ctx, "to_string true").returnValue.asString() == "true");
+    CHECK(run(engine, ctx, "to_string nil").returnValue.asString() == "nil");
+    CHECK(run(engine, ctx, "to_string \"hello\"").returnValue.asString() == "hello");
+}
+
 TEST_CASE("Builtins: random_range returns in range", "[builtins][math]") {
     ScriptEngine engine;
     ExecutionContext ctx(engine);

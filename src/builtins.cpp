@@ -99,6 +99,22 @@ void registerMathBuiltins(ScriptEngine& engine) {
         return Value::number(std::tan(args[0].asNumber()));
     });
 
+    engine.registerFunction("atan2", [](ExecutionContext&, const std::vector<Value>& args) -> Value {
+        if (args.size() < 2) return Value::nil();
+        return Value::number(std::atan2(args[0].asNumber(), args[1].asNumber()));
+    });
+
+    engine.registerFunction("clamp", [](ExecutionContext&, const std::vector<Value>& args) -> Value {
+        if (args.size() < 3) return Value::nil();
+        bool anyFloat = args[0].isFloat() || args[1].isFloat() || args[2].isFloat();
+        if (anyFloat) {
+            double x = args[0].asNumber(), lo = args[1].asNumber(), hi = args[2].asNumber();
+            return Value::number(std::max(lo, std::min(x, hi)));
+        }
+        int64_t x = args[0].asInt(), lo = args[1].asInt(), hi = args[2].asInt();
+        return Value::integer(std::max(lo, std::min(x, hi)));
+    });
+
     engine.registerFunction("random", [](ExecutionContext&, const std::vector<Value>&) -> Value {
         return Value::integer(static_cast<int64_t>(rng()()));
     });
@@ -239,6 +255,11 @@ void registerTypeBuiltins(ScriptEngine& engine) {
     });
 
     engine.registerFunction("to_str", [](ExecutionContext&, const std::vector<Value>& args) -> Value {
+        if (args.empty()) return Value::string("");
+        return Value::string(args[0].toString());
+    });
+
+    engine.registerFunction("to_string", [](ExecutionContext&, const std::vector<Value>& args) -> Value {
         if (args.empty()) return Value::string("");
         return Value::string(args[0].toString());
     });

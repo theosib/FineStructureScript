@@ -142,11 +142,11 @@ Executes in current scope (definitions persist).
 
 ## Built-in Functions
 
-Math: `abs` `min` `max` `floor` `ceil` `round` `sqrt` `pow` `sin` `cos` `tan` `random` `random_range lo hi` `random_float`
+Math: `abs` `min` `max` `clamp x lo hi` `floor` `ceil` `round` `sqrt` `pow` `sin` `cos` `tan` `atan2 y x` `random` `random_range lo hi` `random_float`
 
 String: `str_length` `str_concat a b ...` `str_substr s start [len]` `str_find s needle` `str_upper` `str_lower` `format fmt args...`
 
-Type: `to_int` `to_float` `to_str` `to_bool` `type`
+Type: `to_int` `to_float` `to_str` `to_string` `to_bool` `type`
 
 Comparison (prefix): `eq` `ne` `lt` `gt` `le` `ge`
 
