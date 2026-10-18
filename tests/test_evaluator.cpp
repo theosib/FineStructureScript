@@ -1651,3 +1651,184 @@ TEST_CASE("Format % with array — single element same as scalar", "[evaluator][
     CHECK(result.asString() == "3.14");
 }
 
+// === Closure / Scope Cycle & Leak Prevention ===
+
+TEST_CASE("Named recursive function does not leak Scope or AstNode", "[evaluator][memory]") {
+    std::weak_ptr<Scope> weakScope;
+    std::weak_ptr<AstNode> weakAst;
+    std::weak_ptr<Closure> weakClosure;
+
+    {
+        DefaultInterner interner;
+        auto scope = Scope::createGlobal();
+        weakScope = scope;
+        Evaluator evaluator(interner, scope);
+
+        auto ast = std::shared_ptr<AstNode>(Parser::parse(R"(
+            fn factorial [n] do
+                if (n <= 1) {return 1}
+                (n * {factorial (n - 1)})
+            end
+        )").release());
+        weakAst = ast;
+
+        evaluator.eval(ast, scope);
+        ast.reset();
+
+        // While scope is alive, factorial closure keeps ast alive
+        CHECK_FALSE(weakAst.expired());
+
+        uint32_t factSym = interner.intern("factorial");
+        REQUIRE(scope->lookup(factSym) != nullptr);
+        weakClosure = scope->lookup(factSym)->closurePtr();
+
+        auto callAst = std::shared_ptr<AstNode>(Parser::parse("factorial 6").release());
+        CHECK(evaluator.eval(callAst, scope).asInt() == 720);
+    }
+
+    CHECK(weakScope.expired());
+    CHECK(weakClosure.expired());
+    CHECK(weakAst.expired());
+}
+
+TEST_CASE("Mutually recursive functions work and do not leak Scope or AstNode", "[evaluator][memory]") {
+    std::weak_ptr<Scope> weakScope;
+    std::weak_ptr<AstNode> weakAst;
+
+    {
+        DefaultInterner interner;
+        auto scope = Scope::createGlobal();
+        weakScope = scope;
+        Evaluator evaluator(interner, scope);
+
+        auto ast = std::shared_ptr<AstNode>(Parser::parse(R"(
+            fn isEven [n] do
+                if (n == 0) {return true}
+                isOdd (n - 1)
+            end
+            fn isOdd [n] do
+                if (n == 0) {return false}
+                isEven (n - 1)
+            end
+            [{isEven 10} {isOdd 10} {isEven 7} {isOdd 7}]
+        )").release());
+        weakAst = ast;
+
+        Value res = evaluator.eval(ast, scope);
+        ast.reset();
+
+        REQUIRE(res.isArray());
+        CHECK(res.asArray()[0].asBool() == true);
+        CHECK(res.asArray()[1].asBool() == false);
+        CHECK(res.asArray()[2].asBool() == false);
+        CHECK(res.asArray()[3].asBool() == true);
+    }
+
+    CHECK(weakScope.expired());
+    CHECK(weakAst.expired());
+}
+
+TEST_CASE("Local named and mutually recursive functions do not leak callScope", "[evaluator][memory]") {
+    std::weak_ptr<Scope> weakRootScope;
+    std::weak_ptr<AstNode> weakAst;
+    std::weak_ptr<Scope> weakEscapedCallScope;
+
+    {
+        DefaultInterner interner;
+        auto scope = Scope::createGlobal();
+        weakRootScope = scope;
+        Evaluator evaluator(interner, scope);
+
+        auto ast = std::shared_ptr<AstNode>(Parser::parse(R"(
+            fn makeParityChecker [offset] do
+                fn isEven [n] do
+                    if (n == 0) {return true}
+                    isOdd (n - 1)
+                end
+                fn isOdd [n] do
+                    if (n == 0) {return false}
+                    isEven (n - 1)
+                end
+                fn check [x] {isEven (x + offset)}
+                ~check
+            end
+            set checker {makeParityChecker 1}
+        )").release());
+        weakAst = ast;
+
+        evaluator.eval(ast, scope);
+        ast.reset();
+
+        uint32_t checkerSym = interner.intern("checker");
+        Value* checkerVal = scope->lookup(checkerSym);
+        REQUIRE(checkerVal != nullptr);
+        REQUIRE(checkerVal->isClosure());
+        weakEscapedCallScope = checkerVal->asClosure().scope();
+        CHECK_FALSE(weakEscapedCallScope.expired());
+
+        auto call1 = std::shared_ptr<AstNode>(Parser::parse("checker 3").release());
+        CHECK(evaluator.eval(call1, scope).asBool() == true);
+        auto call2 = std::shared_ptr<AstNode>(Parser::parse("checker 4").release());
+        CHECK(evaluator.eval(call2, scope).asBool() == false);
+
+        // Overwriting checker in scope should immediately free the captured callScope
+        auto clearAst = std::shared_ptr<AstNode>(Parser::parse("set checker nil").release());
+        evaluator.eval(clearAst, scope);
+        CHECK(weakEscapedCallScope.expired());
+    }
+
+    CHECK(weakRootScope.expired());
+    CHECK(weakAst.expired());
+}
+
+TEST_CASE("Object factory with methods does not leak Scope or Map", "[evaluator][memory]") {
+    std::weak_ptr<Scope> weakRootScope;
+    std::weak_ptr<MapData> weakPetMap;
+    std::weak_ptr<Scope> weakFactoryCallScope;
+
+    {
+        DefaultInterner interner;
+        auto scope = Scope::createGlobal();
+        weakRootScope = scope;
+        Evaluator evaluator(interner, scope);
+
+        auto ast = std::shared_ptr<AstNode>(Parser::parse(R"(
+            fn makePet [name sound] do
+                set pet {=name name =sound sound}
+                set pet.speak fn [self] "{self.name} says {self.sound}"
+                return pet
+            end
+            set dog {makePet "Rex" "Woof"}
+        )").release());
+
+        evaluator.eval(ast, scope);
+        ast.reset();
+
+        uint32_t dogSym = interner.intern("dog");
+        Value* dogVal = scope->lookup(dogSym);
+        REQUIRE(dogVal != nullptr);
+        REQUIRE(dogVal->isMap());
+        weakPetMap = dogVal->mapPtr();
+
+        uint32_t speakSym = interner.intern("speak");
+        {
+            Value speakVal = dogVal->asMap().get(speakSym);
+            REQUIRE(speakVal.isClosure());
+            weakFactoryCallScope = speakVal.asClosure().scope();
+        }
+        CHECK_FALSE(weakFactoryCallScope.expired());
+
+        auto speakCall = std::shared_ptr<AstNode>(Parser::parse("dog.speak").release());
+        CHECK(evaluator.eval(speakCall, scope).asString() == "Rex says Woof");
+
+        // Dropping dog frees both the MapData and the factory callScope immediately
+        auto clearAst = std::shared_ptr<AstNode>(Parser::parse("set dog nil").release());
+        evaluator.eval(clearAst, scope);
+        CHECK(weakPetMap.expired());
+        CHECK(weakFactoryCallScope.expired());
+    }
+
+    CHECK(weakRootScope.expired());
+}
+
+

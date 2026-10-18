@@ -5,6 +5,8 @@
 #include "finescript/value.h"
 #include "finescript/map_data.h"
 #include <cmath>
+#include <thread>
+#include <vector>
 
 using namespace finescript;
 
@@ -161,7 +163,7 @@ TEST_CASE("Builtins: random_range returns in range", "[builtins][math]") {
     }
 }
 
-TEST_CASE("Builtins: random_float returns in [0,1)", "[builtins][math]") {
+TEST_CASE("Builtins: random_float returns in 0 to 1", "[builtins][math]") {
     ScriptEngine engine;
     ExecutionContext ctx(engine);
     for (int i = 0; i < 20; ++i) {
@@ -169,6 +171,33 @@ TEST_CASE("Builtins: random_float returns in [0,1)", "[builtins][math]") {
         CHECK(r.success);
         CHECK(r.returnValue.asFloat() >= 0.0);
         CHECK(r.returnValue.asFloat() < 1.0);
+    }
+}
+
+TEST_CASE("Builtins: thread_local RNG concurrent calls", "[builtins][math][threads]") {
+    constexpr int kThreads = 4;
+    constexpr int kIters = 100;
+    std::vector<std::thread> threads;
+    std::vector<bool> ok(kThreads, true);
+
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&, t]() {
+            ScriptEngine engine;
+            ExecutionContext ctx(engine);
+            for (int i = 0; i < kIters; ++i) {
+                auto r1 = run(engine, ctx, "random_range 1 100");
+                auto r2 = run(engine, ctx, "random_float");
+                if (!r1.success || r1.returnValue.asInt() < 1 || r1.returnValue.asInt() > 100 ||
+                    !r2.success || r2.returnValue.asFloat() < 0.0 || r2.returnValue.asFloat() >= 1.0) {
+                    ok[t] = false;
+                    break;
+                }
+            }
+        });
+    }
+    for (auto& th : threads) th.join();
+    for (int t = 0; t < kThreads; ++t) {
+        CHECK(ok[t]);
     }
 }
 

@@ -21,12 +21,20 @@ struct Closure {
     const struct AstNode* body = nullptr;     // raw pointer into AST
     std::shared_ptr<const struct AstNode> astRoot; // keeps AST alive
     std::shared_ptr<class Scope> capturedScope;
+    std::weak_ptr<class Scope> weakCapturedScope; // non-owning ref when stored in capturedScope
+    uint64_t closureId = 0;                   // identity preserved across weak/strong copies
     std::string name;                         // empty if anonymous
     // Variadic params
     uint32_t restParamId = 0;                 // [rest] param symbol, 0 = none
     bool hasRestParam = false;
     uint32_t kwargsParamId = 0;               // {kwargs} param symbol, 0 = none
     bool hasKwargsParam = false;
+
+    /// Resolve the captured scope from either the strong or weak reference.
+    std::shared_ptr<class Scope> scope() const {
+        if (capturedScope) return capturedScope;
+        return weakCapturedScope.lock();
+    }
 };
 
 /// The universal value type in finescript.
@@ -99,6 +107,7 @@ public:
     std::shared_ptr<std::string>& stringPtr();
     std::shared_ptr<std::vector<Value>>& arrayPtr();
     std::shared_ptr<MapData>& mapPtr();
+    const std::shared_ptr<finescript::Closure>& closurePtr() const;
 
     // -- Truthiness: nil and false are falsy, everything else truthy --
     bool truthy() const;

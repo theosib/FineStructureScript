@@ -14,13 +14,20 @@ ExecutionContext::ExecutionContext(ScriptEngine& engine)
     contextScope_->define(engine_.intern("global"), Value::proxyMap(std::move(globalProxy)));
 }
 
+ExecutionContext::~ExecutionContext() {
+    eventHandlers_.clear();
+    if (contextScope_) {
+        contextScope_->clear();
+    }
+}
+
 void ExecutionContext::set(std::string_view name, Value value) {
     contextScope_->define(engine_.intern(name), std::move(value));
 }
 
 Value ExecutionContext::get(std::string_view name) const {
     auto* val = contextScope_->lookup(engine_.intern(name));
-    return val ? *val : Value::nil();
+    return val ? Scope::ensureStrong(*val) : Value::nil();
 }
 
 ScriptEngine& ExecutionContext::engine() { return engine_; }

@@ -118,73 +118,73 @@ Value Value::nativeFunction(std::shared_ptr<NativeFunctionObject> f) {
 
 bool Value::asBool() const {
     if (auto* p = std::get_if<bool>(&data_)) return *p;
-    throw std::runtime_error("Value is not a bool, got " + typeName());
+    throw ScriptError("Value is not a bool, got " + typeName());
 }
 
 int64_t Value::asInt() const {
     if (auto* p = std::get_if<int64_t>(&data_)) return *p;
-    throw std::runtime_error("Value is not an int, got " + typeName());
+    throw ScriptError("Value is not an int, got " + typeName());
 }
 
 double Value::asFloat() const {
     if (auto* p = std::get_if<double>(&data_)) return *p;
-    throw std::runtime_error("Value is not a float, got " + typeName());
+    throw ScriptError("Value is not a float, got " + typeName());
 }
 
 double Value::asNumber() const {
     if (auto* p = std::get_if<int64_t>(&data_)) return static_cast<double>(*p);
     if (auto* p = std::get_if<double>(&data_)) return *p;
-    throw std::runtime_error("Value is not numeric, got " + typeName());
+    throw ScriptError("Value is not numeric, got " + typeName());
 }
 
 uint32_t Value::asSymbol() const {
     if (auto* p = std::get_if<uint32_t>(&data_)) return *p;
-    throw std::runtime_error("Value is not a symbol, got " + typeName());
+    throw ScriptError("Value is not a symbol, got " + typeName());
 }
 
 const std::string& Value::asString() const {
     if (auto* p = std::get_if<std::shared_ptr<std::string>>(&data_)) return **p;
-    throw std::runtime_error("Value is not a string, got " + typeName());
+    throw ScriptError("Value is not a string, got " + typeName());
 }
 
 std::string& Value::asStringMut() {
     if (auto* p = std::get_if<std::shared_ptr<std::string>>(&data_)) return **p;
-    throw std::runtime_error("Value is not a string, got " + typeName());
+    throw ScriptError("Value is not a string, got " + typeName());
 }
 
 const std::vector<Value>& Value::asArray() const {
     if (auto* p = std::get_if<std::shared_ptr<std::vector<Value>>>(&data_)) return **p;
-    throw std::runtime_error("Value is not an array, got " + typeName());
+    throw ScriptError("Value is not an array, got " + typeName());
 }
 
 std::vector<Value>& Value::asArrayMut() {
     if (auto* p = std::get_if<std::shared_ptr<std::vector<Value>>>(&data_)) return **p;
-    throw std::runtime_error("Value is not an array, got " + typeName());
+    throw ScriptError("Value is not an array, got " + typeName());
 }
 
 MapData& Value::asMap() {
     if (auto* p = std::get_if<std::shared_ptr<MapData>>(&data_)) return **p;
-    throw std::runtime_error("Value is not a map, got " + typeName());
+    throw ScriptError("Value is not a map, got " + typeName());
 }
 
 const MapData& Value::asMap() const {
     if (auto* p = std::get_if<std::shared_ptr<MapData>>(&data_)) return **p;
-    throw std::runtime_error("Value is not a map, got " + typeName());
+    throw ScriptError("Value is not a map, got " + typeName());
 }
 
 Closure& Value::asClosure() {
     if (auto* p = std::get_if<std::shared_ptr<Closure>>(&data_)) return **p;
-    throw std::runtime_error("Value is not a closure, got " + typeName());
+    throw ScriptError("Value is not a closure, got " + typeName());
 }
 
 const Closure& Value::asClosure() const {
     if (auto* p = std::get_if<std::shared_ptr<Closure>>(&data_)) return **p;
-    throw std::runtime_error("Value is not a closure, got " + typeName());
+    throw ScriptError("Value is not a closure, got " + typeName());
 }
 
 NativeFunctionObject& Value::asNativeFunction() {
     if (auto* p = std::get_if<std::shared_ptr<NativeFunctionObject>>(&data_)) return **p;
-    throw std::runtime_error("Value is not a native function, got " + typeName());
+    throw ScriptError("Value is not a native function, got " + typeName());
 }
 
 std::shared_ptr<std::string>& Value::stringPtr() {
@@ -197,6 +197,10 @@ std::shared_ptr<std::vector<Value>>& Value::arrayPtr() {
 
 std::shared_ptr<MapData>& Value::mapPtr() {
     return std::get<std::shared_ptr<MapData>>(data_);
+}
+
+const std::shared_ptr<Closure>& Value::closurePtr() const {
+    return std::get<std::shared_ptr<Closure>>(data_);
 }
 
 // -- Truthiness --
@@ -232,9 +236,12 @@ bool Value::operator==(const Value& other) const {
         case Type::Map:
             return std::get<std::shared_ptr<MapData>>(data_).get() ==
                    std::get<std::shared_ptr<MapData>>(other.data_).get();
-        case Type::Closure:
-            return std::get<std::shared_ptr<Closure>>(data_).get() ==
-                   std::get<std::shared_ptr<Closure>>(other.data_).get();
+        case Type::Closure: {
+            const auto& a = std::get<std::shared_ptr<Closure>>(data_);
+            const auto& b = std::get<std::shared_ptr<Closure>>(other.data_);
+            if (a.get() == b.get()) return true;
+            return a && b && a->closureId != 0 && a->closureId == b->closureId;
+        }
         case Type::NativeFunction:
             return std::get<std::shared_ptr<NativeFunctionObject>>(data_).get() ==
                    std::get<std::shared_ptr<NativeFunctionObject>>(other.data_).get();

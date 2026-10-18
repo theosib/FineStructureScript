@@ -17,6 +17,7 @@ struct ScriptEngine::Impl {
     std::unique_ptr<DefaultInterner> ownedInterner;
     Interner* interner = nullptr;
     std::shared_ptr<Scope> globalScope;
+    PreInternedSymbols builtinSymbols;
     ResourceFinder* resourceFinder = nullptr;
 
     struct CachedScript {
@@ -29,6 +30,7 @@ struct ScriptEngine::Impl {
         ownedInterner = std::make_unique<DefaultInterner>();
         interner = ownedInterner.get();
         globalScope = Scope::createGlobal();
+        builtinSymbols.init(*interner);
     }
 };
 
@@ -36,7 +38,11 @@ ScriptEngine::ScriptEngine() : impl_(std::make_unique<Impl>()) {
     registerBuiltins(*this);
 }
 
-ScriptEngine::~ScriptEngine() = default;
+ScriptEngine::~ScriptEngine() {
+    if (impl_ && impl_->globalScope) {
+        impl_->globalScope->clear();
+    }
+}
 
 CompiledScript* ScriptEngine::loadScript(const std::filesystem::path& path) {
     auto key = path.string();
@@ -67,6 +73,9 @@ std::unique_ptr<CompiledScript> ScriptEngine::parseString(std::string_view sourc
     auto script = std::make_unique<CompiledScript>();
     script->name = std::string(name);
     script->root = Parser::parse(source);
+    if (script->root) {
+        internAstSymbols(*script->root, interner());
+    }
     return script;
 }
 
@@ -81,7 +90,7 @@ void ScriptEngine::invalidateAllCaches() {
 FullScriptResult ScriptEngine::execute(const CompiledScript& script, ExecutionContext& context) {
     FullScriptResult result;
     try {
-        Evaluator evaluator(interner(), impl_->globalScope, this);
+        Evaluator evaluator(interner(), impl_->globalScope, this, impl_->builtinSymbols);
         // Execute in context scope so definitions persist across commands
         result.returnValue = evaluator.eval(script.root, context.scope(), &context);
         result.success = true;
@@ -123,11 +132,13 @@ Value ScriptEngine::callFunction(const Value& callable, std::vector<Value> args,
         return const_cast<Value&>(callable).asNativeFunction().call(context, args);
     }
     if (callable.isClosure()) {
-        Evaluator evaluator(interner(), impl_->globalScope, this);
+        const auto& closure = callable.asClosure();
+        SourceLocation callLoc = closure.body ? closure.body->loc : SourceLocation{};
+        Evaluator evaluator(interner(), impl_->globalScope, this, impl_->builtinSymbols);
         return evaluator.callFunction(callable, std::move(args),
-                                      context.scope(), &context, SourceLocation{});
+                                      context.scope(), &context, callLoc);
     }
-    throw std::runtime_error("callFunction: value is not callable");
+    throw ScriptError("callFunction: value is not callable");
 }
 
 void ScriptEngine::registerFunction(std::string_view name,
@@ -153,6 +164,12 @@ std::filesystem::path ScriptEngine::resolveScript(std::string_view name) {
 
 void ScriptEngine::setInterner(Interner* interner) {
     impl_->interner = interner;
+    if (interner) {
+        impl_->builtinSymbols.init(*interner);
+        // Re-bind built-in functions in globalScope under the new interner's symbol IDs
+        impl_->globalScope->clear();
+        registerBuiltins(*this);
+    }
 }
 
 uint32_t ScriptEngine::intern(std::string_view str) {

@@ -8,9 +8,121 @@
 #include "finescript/script_engine.h"
 #include "finescript/format_util.h"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 
 namespace finescript {
+namespace {
+
+std::atomic<uint64_t> g_nextClosureId{1};
+
+} // anonymous namespace
+
+void internAstNode(const AstNode& node, Interner& interner) {
+    node.cachedSymbolId = 0;
+    node.cachedNamePartIds.clear();
+    node.cachedRestParamId = 0;
+    node.cachedKwargsParamId = 0;
+    node.cachedHasRestParam = false;
+    node.cachedHasKwargsParam = false;
+
+    switch (node.kind) {
+        case AstNodeKind::SymbolLit:
+        case AstNodeKind::Name:
+        case AstNodeKind::On:
+            node.cachedSymbolId = interner.intern(node.stringValue);
+            break;
+        case AstNodeKind::Fn:
+            if (!node.stringValue.empty()) {
+                node.cachedSymbolId = interner.intern(node.stringValue);
+            }
+            if (!node.nameParts.empty()) {
+                node.cachedNamePartIds.reserve(node.nameParts.size());
+                for (const auto& p : node.nameParts) {
+                    node.cachedNamePartIds.push_back(interner.intern(p));
+                }
+            }
+            if (!node.op.empty()) {
+                auto pipe = node.op.find('|');
+                if (pipe == std::string::npos) {
+                    node.cachedHasRestParam = true;
+                    node.cachedRestParamId = interner.intern(node.op);
+                } else {
+                    std::string_view opView(node.op);
+                    auto restName = opView.substr(0, pipe);
+                    auto kwargsName = opView.substr(pipe + 1);
+                    if (!restName.empty()) {
+                        node.cachedHasRestParam = true;
+                        node.cachedRestParamId = interner.intern(restName);
+                    }
+                    if (!kwargsName.empty()) {
+                        node.cachedHasKwargsParam = true;
+                        node.cachedKwargsParamId = interner.intern(kwargsName);
+                    }
+                }
+            }
+            break;
+        case AstNodeKind::DottedName:
+        case AstNodeKind::Call:
+        case AstNodeKind::MapLit:
+        case AstNodeKind::Set:
+        case AstNodeKind::Let:
+        case AstNodeKind::For:
+            if (!node.nameParts.empty()) {
+                node.cachedNamePartIds.reserve(node.nameParts.size());
+                for (const auto& part : node.nameParts) {
+                    node.cachedNamePartIds.push_back(interner.intern(part));
+                }
+            }
+            break;
+        default:
+            break;
+    }
+    node.cachedInterner = &interner;
+}
+
+void internAstSymbols(const AstNode& root, Interner& interner) {
+    internAstNode(root, interner);
+    for (const auto& child : root.children) {
+        if (child) {
+            internAstSymbols(*child, interner);
+        }
+    }
+}
+
+void PreInternedSymbols::init(Interner& interner) {
+    get = interner.intern("get");
+    set = interner.intern("set");
+    has = interner.intern("has");
+    remove = interner.intern("remove");
+    keys = interner.intern("keys");
+    values = interner.intern("values");
+    length = interner.intern("length");
+    push = interner.intern("push");
+    pop = interner.intern("pop");
+    setMethod = interner.intern("setMethod");
+    slice = interner.intern("slice");
+    contains = interner.intern("contains");
+    sort = interner.intern("sort");
+    map = interner.intern("map");
+    filter = interner.intern("filter");
+    foreach = interner.intern("foreach");
+    // String methods
+    insert = interner.intern("insert");
+    del = interner.intern("delete");
+    replace = interner.intern("replace");
+    split = interner.intern("split");
+    substr = interner.intern("substr");
+    find = interner.intern("find");
+    upper = interner.intern("upper");
+    lower = interner.intern("lower");
+    trim = interner.intern("trim");
+    starts_with = interner.intern("starts_with");
+    ends_with = interner.intern("ends_with");
+    char_at = interner.intern("char_at");
+    sort_by = interner.intern("sort_by");
+    self = interner.intern("self");
+}
 
 Evaluator::Evaluator(Interner& interner, std::shared_ptr<Scope> globalScope,
                      ScriptEngine* engine)
@@ -18,38 +130,55 @@ Evaluator::Evaluator(Interner& interner, std::shared_ptr<Scope> globalScope,
     preInternSymbols();
 }
 
+Evaluator::Evaluator(Interner& interner, std::shared_ptr<Scope> globalScope,
+                     ScriptEngine* engine, const PreInternedSymbols& syms)
+    : interner_(interner), globalScope_(std::move(globalScope)), engine_(engine) {
+    applyPreInternedSymbols(syms);
+}
+
 void Evaluator::preInternSymbols() {
-    sym_get_ = interner_.intern("get");
-    sym_set_ = interner_.intern("set");
-    sym_has_ = interner_.intern("has");
-    sym_remove_ = interner_.intern("remove");
-    sym_keys_ = interner_.intern("keys");
-    sym_values_ = interner_.intern("values");
-    sym_length_ = interner_.intern("length");
-    sym_push_ = interner_.intern("push");
-    sym_pop_ = interner_.intern("pop");
-    sym_setMethod_ = interner_.intern("setMethod");
-    sym_slice_ = interner_.intern("slice");
-    sym_contains_ = interner_.intern("contains");
-    sym_sort_ = interner_.intern("sort");
-    sym_map_ = interner_.intern("map");
-    sym_filter_ = interner_.intern("filter");
-    sym_foreach_ = interner_.intern("foreach");
-    // String methods
-    sym_insert_ = interner_.intern("insert");
-    sym_delete_ = interner_.intern("delete");
-    sym_replace_ = interner_.intern("replace");
-    sym_split_ = interner_.intern("split");
-    sym_substr_ = interner_.intern("substr");
-    sym_find_ = interner_.intern("find");
-    sym_upper_ = interner_.intern("upper");
-    sym_lower_ = interner_.intern("lower");
-    sym_trim_ = interner_.intern("trim");
-    sym_starts_with_ = interner_.intern("starts_with");
-    sym_ends_with_ = interner_.intern("ends_with");
-    sym_char_at_ = interner_.intern("char_at");
-    sym_sort_by_ = interner_.intern("sort_by");
-    sym_self_ = interner_.intern("self");
+    PreInternedSymbols syms;
+    syms.init(interner_);
+    applyPreInternedSymbols(syms);
+}
+
+void Evaluator::applyPreInternedSymbols(const PreInternedSymbols& syms) {
+    sym_get_ = syms.get;
+    sym_set_ = syms.set;
+    sym_has_ = syms.has;
+    sym_remove_ = syms.remove;
+    sym_keys_ = syms.keys;
+    sym_values_ = syms.values;
+    sym_length_ = syms.length;
+    sym_push_ = syms.push;
+    sym_pop_ = syms.pop;
+    sym_setMethod_ = syms.setMethod;
+    sym_slice_ = syms.slice;
+    sym_contains_ = syms.contains;
+    sym_sort_ = syms.sort;
+    sym_map_ = syms.map;
+    sym_filter_ = syms.filter;
+    sym_foreach_ = syms.foreach;
+    sym_insert_ = syms.insert;
+    sym_delete_ = syms.del;
+    sym_replace_ = syms.replace;
+    sym_split_ = syms.split;
+    sym_substr_ = syms.substr;
+    sym_find_ = syms.find;
+    sym_upper_ = syms.upper;
+    sym_lower_ = syms.lower;
+    sym_trim_ = syms.trim;
+    sym_starts_with_ = syms.starts_with;
+    sym_ends_with_ = syms.ends_with;
+    sym_char_at_ = syms.char_at;
+    sym_sort_by_ = syms.sort_by;
+    sym_self_ = syms.self;
+}
+
+void Evaluator::ensureInterned(const AstNode& node) const {
+    if (node.cachedInterner != &interner_) {
+        internAstNode(node, interner_);
+    }
 }
 
 bool Evaluator::isAutoMethod(const Value& val) const {
@@ -62,44 +191,64 @@ bool Evaluator::isAutoMethod(const Value& val) const {
 
 Value Evaluator::eval(std::shared_ptr<AstNode> root, std::shared_ptr<Scope> scope,
                       ExecutionContext* ctx) {
+    if (root && root->cachedInterner != &interner_) {
+        internAstSymbols(*root, interner_);
+    }
     auto prevRoot = currentAstRoot_;
     currentAstRoot_ = root;
-    Value result = eval(*root, scope, ctx);
-    currentAstRoot_ = prevRoot;
-    return result;
+    try {
+        Value result = eval(*root, scope, ctx);
+        currentAstRoot_ = prevRoot;
+        return result;
+    } catch (...) {
+        currentAstRoot_ = prevRoot;
+        throw;
+    }
 }
 
 Value Evaluator::eval(const AstNode& node, std::shared_ptr<Scope> scope,
                       ExecutionContext* ctx) {
-    switch (node.kind) {
-        case AstNodeKind::IntLit:      return evalIntLit(node);
-        case AstNodeKind::FloatLit:    return evalFloatLit(node);
-        case AstNodeKind::StringLit:   return evalStringLit(node);
-        case AstNodeKind::StringInterp:return evalStringInterp(node, scope, ctx);
-        case AstNodeKind::SymbolLit:   return evalSymbolLit(node);
-        case AstNodeKind::BoolLit:     return evalBoolLit(node);
-        case AstNodeKind::NilLit:      return evalNilLit(node);
-        case AstNodeKind::ArrayLit:    return evalArrayLit(node, scope, ctx);
-        case AstNodeKind::Name:        return evalName(node, scope);
-        case AstNodeKind::DottedName:  return evalDottedName(node, scope, ctx);
-        case AstNodeKind::Call:        return evalCall(node, scope, ctx);
-        case AstNodeKind::Infix:       return evalInfix(node, scope, ctx);
-        case AstNodeKind::UnaryNot:    return evalUnaryNot(node, scope, ctx);
-        case AstNodeKind::UnaryNegate: return evalUnaryNegate(node, scope, ctx);
-        case AstNodeKind::Block:       return evalBlock(node, scope, ctx);
-        case AstNodeKind::Index:       return evalIndex(node, scope, ctx);
-        case AstNodeKind::Ref:        return evalRef(node, scope, ctx);
-        case AstNodeKind::MapLit:     return evalMapLit(node, scope, ctx);
-        case AstNodeKind::Set:         return evalSet(node, scope, ctx);
-        case AstNodeKind::Let:         return evalLet(node, scope, ctx);
-        case AstNodeKind::Fn:          return evalFn(node, scope);
-        case AstNodeKind::If:          return evalIf(node, scope, ctx);
-        case AstNodeKind::For:         return evalFor(node, scope, ctx);
-        case AstNodeKind::While:       return evalWhile(node, scope, ctx);
-        case AstNodeKind::Match:       return evalMatch(node, scope, ctx);
-        case AstNodeKind::On:          return evalOn(node, scope, ctx);
-        case AstNodeKind::Return:      return evalReturn(node, scope, ctx);
-        case AstNodeKind::Source:       return evalSource(node, scope, ctx);
+    try {
+        switch (node.kind) {
+            case AstNodeKind::IntLit:      return evalIntLit(node);
+            case AstNodeKind::FloatLit:    return evalFloatLit(node);
+            case AstNodeKind::StringLit:   return evalStringLit(node);
+            case AstNodeKind::StringInterp:return evalStringInterp(node, scope, ctx);
+            case AstNodeKind::SymbolLit:   return evalSymbolLit(node);
+            case AstNodeKind::BoolLit:     return evalBoolLit(node);
+            case AstNodeKind::NilLit:      return evalNilLit(node);
+            case AstNodeKind::ArrayLit:    return evalArrayLit(node, scope, ctx);
+            case AstNodeKind::Name:        return evalName(node, scope);
+            case AstNodeKind::DottedName:  return evalDottedName(node, scope, ctx);
+            case AstNodeKind::Call:        return evalCall(node, scope, ctx);
+            case AstNodeKind::Infix:       return evalInfix(node, scope, ctx);
+            case AstNodeKind::UnaryNot:    return evalUnaryNot(node, scope, ctx);
+            case AstNodeKind::UnaryNegate: return evalUnaryNegate(node, scope, ctx);
+            case AstNodeKind::Block:       return evalBlock(node, scope, ctx);
+            case AstNodeKind::Index:       return evalIndex(node, scope, ctx);
+            case AstNodeKind::Ref:        return evalRef(node, scope, ctx);
+            case AstNodeKind::MapLit:     return evalMapLit(node, scope, ctx);
+            case AstNodeKind::Set:         return evalSet(node, scope, ctx);
+            case AstNodeKind::Let:         return evalLet(node, scope, ctx);
+            case AstNodeKind::Fn:          return evalFn(node, scope);
+            case AstNodeKind::If:          return evalIf(node, scope, ctx);
+            case AstNodeKind::For:         return evalFor(node, scope, ctx);
+            case AstNodeKind::While:       return evalWhile(node, scope, ctx);
+            case AstNodeKind::Match:       return evalMatch(node, scope, ctx);
+            case AstNodeKind::On:          return evalOn(node, scope, ctx);
+            case AstNodeKind::Return:      return evalReturn(node, scope, ctx);
+            case AstNodeKind::Source:       return evalSource(node, scope, ctx);
+        }
+    } catch (const ScriptError& e) {
+        if (e.location().line == 0 && node.loc.line != 0) {
+            throw ScriptError(e.rawMessage(), node.loc);
+        }
+        throw;
+    } catch (const std::exception& e) {
+        if (node.loc.line != 0) {
+            throw ScriptError(e.what(), node.loc);
+        }
+        throw;
     }
     throw ScriptError("Unknown AST node kind", node.loc);
 }
@@ -129,8 +278,8 @@ Value Evaluator::evalStringInterp(const AstNode& node, std::shared_ptr<Scope> sc
 }
 
 Value Evaluator::evalSymbolLit(const AstNode& node) {
-    uint32_t sym = interner_.intern(node.stringValue);
-    return Value::symbol(sym);
+    ensureInterned(node);
+    return Value::symbol(node.cachedSymbolId);
 }
 
 Value Evaluator::evalBoolLit(const AstNode& node) {
@@ -154,9 +303,9 @@ Value Evaluator::evalArrayLit(const AstNode& node, std::shared_ptr<Scope> scope,
 // -- Name lookup --
 
 Value Evaluator::evalName(const AstNode& node, std::shared_ptr<Scope> scope) {
-    uint32_t sym = interner_.intern(node.stringValue);
-    Value* v = scope->lookup(sym);
-    if (v) return *v;
+    ensureInterned(node);
+    Value* v = scope->lookup(node.cachedSymbolId);
+    if (v) return Scope::ensureStrong(*v);
     return Value::nil(); // unbound = nil
 }
 
@@ -164,10 +313,12 @@ Value Evaluator::evalName(const AstNode& node, std::shared_ptr<Scope> scope) {
 
 Value Evaluator::evalDottedName(const AstNode& node, std::shared_ptr<Scope> scope,
                                  ExecutionContext* ctx) {
+    ensureInterned(node);
     Value current = eval(*node.children[0], scope, ctx);
 
-    for (const auto& field : node.nameParts) {
-        uint32_t sym = interner_.intern(field);
+    for (size_t i = 0; i < node.nameParts.size(); i++) {
+        const auto& field = node.nameParts[i];
+        uint32_t sym = node.cachedNamePartIds[i];
 
         if (current.isMap()) {
             // Built-in zero-arg map properties
@@ -214,6 +365,7 @@ Value Evaluator::evalDottedName(const AstNode& node, std::shared_ptr<Scope> scop
 
 Value Evaluator::evalCall(const AstNode& node, std::shared_ptr<Scope> scope,
                            ExecutionContext* ctx) {
+    ensureInterned(node);
     auto& verbNode = *node.children[0];
     size_t numNamed = node.nameParts.size();  // named arg keys stored in Call's nameParts
     size_t totalChildren = node.children.size();
@@ -223,7 +375,7 @@ Value Evaluator::evalCall(const AstNode& node, std::shared_ptr<Scope> scope,
     auto evalNamedArgs = [&]() -> std::vector<std::pair<uint32_t, Value>> {
         std::vector<std::pair<uint32_t, Value>> result;
         for (size_t i = 0; i < numNamed; i++) {
-            uint32_t sym = interner_.intern(node.nameParts[i]);
+            uint32_t sym = node.cachedNamePartIds[i];
             Value val = eval(*node.children[numPosArgs + 1 + i], scope, ctx);
             result.push_back({sym, std::move(val)});
         }
@@ -232,12 +384,18 @@ Value Evaluator::evalCall(const AstNode& node, std::shared_ptr<Scope> scope,
 
     // Method call: verb is DottedName
     if (verbNode.kind == AstNodeKind::DottedName && !verbNode.nameParts.empty()) {
+        ensureInterned(verbNode);
         // Evaluate base and navigate to receiver
         Value receiver = eval(*verbNode.children[0], scope, ctx);
+        Scope* receiverOwnerScope = nullptr;
+        if (verbNode.children[0]->kind == AstNodeKind::Name) {
+            ensureInterned(*verbNode.children[0]);
+            receiverOwnerScope = scope->lookupWithScope(verbNode.children[0]->cachedSymbolId).second;
+        }
 
         // Navigate through all but last field
         for (size_t i = 0; i + 1 < verbNode.nameParts.size(); i++) {
-            uint32_t sym = interner_.intern(verbNode.nameParts[i]);
+            uint32_t sym = verbNode.cachedNamePartIds[i];
             if (receiver.isMap()) {
                 receiver = receiver.asMap().get(sym);
             } else {
@@ -247,12 +405,20 @@ Value Evaluator::evalCall(const AstNode& node, std::shared_ptr<Scope> scope,
         }
 
         const std::string& methodName = verbNode.nameParts.back();
-        uint32_t methodSym = interner_.intern(methodName);
+        uint32_t methodSym = verbNode.cachedNamePartIds.back();
 
         // Evaluate positional arguments only
         std::vector<Value> args;
         for (size_t i = 1; i <= numPosArgs; i++) {
             args.push_back(eval(*node.children[i], scope, ctx));
+        }
+
+        if (receiverOwnerScope &&
+            (methodSym == sym_set_ || methodSym == sym_setMethod_ ||
+             methodSym == sym_push_ || methodSym == sym_insert_)) {
+            for (auto& a : args) {
+                receiverOwnerScope->breakCyclesIn(a);
+            }
         }
 
         // Check built-in methods (named args not supported for built-ins)
@@ -454,11 +620,12 @@ Value Evaluator::evalRef(const AstNode& node, std::shared_ptr<Scope> scope,
 
 Value Evaluator::evalMapLit(const AstNode& node, std::shared_ptr<Scope> scope,
                              ExecutionContext* ctx) {
+    ensureInterned(node);
     Value mapVal = Value::map();
     MapData& map = mapVal.asMap();
 
     for (size_t i = 0; i < node.nameParts.size(); i++) {
-        uint32_t sym = interner_.intern(node.nameParts[i]);
+        uint32_t sym = node.cachedNamePartIds[i];
         Value val = eval(*node.children[i], scope, ctx);
         map.set(sym, val);
         // Auto-detect methods: closures with first param named "self"
@@ -474,17 +641,18 @@ Value Evaluator::evalMapLit(const AstNode& node, std::shared_ptr<Scope> scope,
 
 Value Evaluator::evalSet(const AstNode& node, std::shared_ptr<Scope> scope,
                           ExecutionContext* ctx) {
+    ensureInterned(node);
     Value val = eval(*node.children[0], scope, ctx);
 
     if (node.nameParts.size() == 1) {
         // Simple: set x 5
-        uint32_t sym = interner_.intern(node.nameParts[0]);
+        uint32_t sym = node.cachedNamePartIds[0];
         scope->set(sym, val);
     } else {
         // Dotted: set a.b.c 5
         // Look up root, navigate to penultimate map, set field on it
-        uint32_t rootSym = interner_.intern(node.nameParts[0]);
-        Value* root = scope->lookup(rootSym);
+        uint32_t rootSym = node.cachedNamePartIds[0];
+        auto [root, ownerScope] = scope->lookupWithScope(rootSym);
         if (!root) {
             throw ScriptError("Undefined variable '" + node.nameParts[0] + "'", node.loc);
         }
@@ -496,14 +664,17 @@ Value Evaluator::evalSet(const AstNode& node, std::shared_ptr<Scope> scope,
                 throw ScriptError("Cannot access field '" + node.nameParts[i] +
                     "' on " + current.typeName(), node.loc);
             }
-            uint32_t sym = interner_.intern(node.nameParts[i]);
+            uint32_t sym = node.cachedNamePartIds[i];
             current = current.asMap().get(sym);
         }
 
         if (!current.isMap()) {
             throw ScriptError("Cannot set field on " + current.typeName(), node.loc);
         }
-        uint32_t lastSym = interner_.intern(node.nameParts.back());
+        uint32_t lastSym = node.cachedNamePartIds.back();
+        if (ownerScope) {
+            ownerScope->breakCyclesIn(val);
+        }
         current.asMap().set(lastSym, val);
         // Auto-detect methods: closures with first param named "self"
         if (isAutoMethod(val)) {
@@ -518,8 +689,9 @@ Value Evaluator::evalSet(const AstNode& node, std::shared_ptr<Scope> scope,
 
 Value Evaluator::evalLet(const AstNode& node, std::shared_ptr<Scope> scope,
                           ExecutionContext* ctx) {
+    ensureInterned(node);
     Value val = eval(*node.children[0], scope, ctx);
-    uint32_t sym = interner_.intern(node.nameParts[0]);
+    uint32_t sym = node.cachedNamePartIds[0];
     scope->define(sym, val);
     return val;
 }
@@ -527,49 +699,33 @@ Value Evaluator::evalLet(const AstNode& node, std::shared_ptr<Scope> scope,
 // -- Fn --
 
 Value Evaluator::evalFn(const AstNode& node, std::shared_ptr<Scope> scope) {
+    ensureInterned(node);
     auto closure = std::make_shared<Closure>();
+    closure->closureId = g_nextClosureId.fetch_add(1, std::memory_order_relaxed);
     closure->name = node.stringValue;
     closure->body = node.children[0].get();
     closure->astRoot = currentAstRoot_;  // keeps AST alive
     closure->capturedScope = scope;
+    closure->weakCapturedScope = scope;
     closure->numRequired = static_cast<size_t>(node.intValue);
-
-    for (const auto& param : node.nameParts) {
-        closure->paramIds.push_back(interner_.intern(param));
-    }
+    closure->paramIds = node.cachedNamePartIds;
 
     // Default expressions (children[1..] are defaults for optional params)
     for (size_t i = 1; i < node.children.size(); i++) {
         closure->defaultExprs.push_back(node.children[i].get());
     }
 
-    // Variadic params: op = "restName|kwargsName" (pipe-delimited)
-    if (!node.op.empty()) {
-        auto pipe = node.op.find('|');
-        if (pipe == std::string::npos) {
-            // rest only (no pipe)
-            closure->hasRestParam = true;
-            closure->restParamId = interner_.intern(node.op);
-        } else {
-            std::string restName = node.op.substr(0, pipe);
-            std::string kwargsName = node.op.substr(pipe + 1);
-            if (!restName.empty()) {
-                closure->hasRestParam = true;
-                closure->restParamId = interner_.intern(restName);
-            }
-            if (!kwargsName.empty()) {
-                closure->hasKwargsParam = true;
-                closure->kwargsParamId = interner_.intern(kwargsName);
-            }
-        }
-    }
+    // Variadic params (pre-interned on AstNode)
+    closure->hasRestParam = node.cachedHasRestParam;
+    closure->restParamId = node.cachedRestParamId;
+    closure->hasKwargsParam = node.cachedHasKwargsParam;
+    closure->kwargsParamId = node.cachedKwargsParamId;
 
     Value closureVal = Value::closure(closure);
 
-    // Named function: define in current scope
+    // Named function: define in current scope (Scope::define weakens the self-cycle)
     if (!node.stringValue.empty()) {
-        uint32_t nameSym = interner_.intern(node.stringValue);
-        scope->define(nameSym, closureVal);
+        scope->define(node.cachedSymbolId, closureVal);
     }
 
     return closureVal;
@@ -601,7 +757,8 @@ Value Evaluator::evalIf(const AstNode& node, std::shared_ptr<Scope> scope,
 
 Value Evaluator::evalFor(const AstNode& node, std::shared_ptr<Scope> scope,
                           ExecutionContext* ctx) {
-    uint32_t varSym = interner_.intern(node.nameParts[0]);
+    ensureInterned(node);
+    uint32_t varSym = node.cachedNamePartIds[0];
     Value iterable = eval(*node.children[0], scope, ctx);
 
     auto loopScope = scope->createChild();
@@ -667,15 +824,17 @@ Value Evaluator::evalOn(const AstNode& node, std::shared_ptr<Scope> scope,
         throw ScriptError("'on' requires an execution context", node.loc);
     }
 
+    ensureInterned(node);
     auto closure = std::make_shared<Closure>();
+    closure->closureId = g_nextClosureId.fetch_add(1, std::memory_order_relaxed);
     closure->name = "on:" + node.stringValue;
     closure->body = node.children[0].get();
     closure->astRoot = currentAstRoot_;  // keeps AST alive
     closure->capturedScope = scope;
+    closure->weakCapturedScope = scope;
 
     Value handlerVal = Value::closure(closure);
-    uint32_t eventSym = interner_.intern(node.stringValue);
-    ctx->registerEventHandler(eventSym, handlerVal);
+    ctx->registerEventHandler(node.cachedSymbolId, handlerVal);
 
     return Value::nil();
 }
@@ -741,106 +900,140 @@ Value Evaluator::callFunction(const Value& callable, std::vector<Value> args,
 }
 
 Value Evaluator::callClosure(Closure& closure, std::vector<Value> args,
-                              ExecutionContext* ctx, SourceLocation /*callSite*/) {
-    auto callScope = closure.capturedScope->createChild();
-
-    // Bind parameters (with default support)
-    for (size_t i = 0; i < closure.paramIds.size(); i++) {
-        if (i < args.size()) {
-            callScope->define(closure.paramIds[i], args[i]);
-        } else if (i >= closure.numRequired &&
-                   (i - closure.numRequired) < closure.defaultExprs.size() &&
-                   closure.defaultExprs[i - closure.numRequired] != nullptr) {
-            // Evaluate default expression at call time
-            Value def = eval(*closure.defaultExprs[i - closure.numRequired], callScope, ctx);
-            callScope->define(closure.paramIds[i], def);
-        } else {
-            callScope->define(closure.paramIds[i], Value::nil());
-        }
+                              ExecutionContext* ctx, SourceLocation callSite) {
+    auto baseScope = closure.scope();
+    if (!baseScope) {
+        throw ScriptError("Closure scope has expired", callSite);
+    }
+    auto callScope = baseScope->createChild();
+    auto prevRoot = currentAstRoot_;
+    if (closure.astRoot) {
+        currentAstRoot_ = closure.astRoot;
     }
 
-    // Collect remaining positional args into [rest] array
-    if (closure.hasRestParam) {
-        std::vector<Value> restArgs;
-        for (size_t i = closure.paramIds.size(); i < args.size(); i++) {
-            restArgs.push_back(args[i]);
-        }
-        callScope->define(closure.restParamId, Value::array(std::move(restArgs)));
-    }
-    // No named args in this path, but define empty map for consistency
-    if (closure.hasKwargsParam) {
-        callScope->define(closure.kwargsParamId, Value::map());
-    }
-
-    // Evaluate body, catching ReturnSignal at function boundary
     try {
-        return eval(*closure.body, callScope, ctx);
-    } catch (ReturnSignal& sig) {
-        return std::move(sig.value());
+        // Bind parameters (with default support)
+        for (size_t i = 0; i < closure.paramIds.size(); i++) {
+            if (i < args.size()) {
+                callScope->define(closure.paramIds[i], args[i]);
+            } else if (i >= closure.numRequired &&
+                       (i - closure.numRequired) < closure.defaultExprs.size() &&
+                       closure.defaultExprs[i - closure.numRequired] != nullptr) {
+                // Evaluate default expression at call time
+                Value def = eval(*closure.defaultExprs[i - closure.numRequired], callScope, ctx);
+                callScope->define(closure.paramIds[i], def);
+            } else {
+                callScope->define(closure.paramIds[i], Value::nil());
+            }
+        }
+
+        // Collect remaining positional args into [rest] array
+        if (closure.hasRestParam) {
+            std::vector<Value> restArgs;
+            for (size_t i = closure.paramIds.size(); i < args.size(); i++) {
+                restArgs.push_back(args[i]);
+            }
+            callScope->define(closure.restParamId, Value::array(std::move(restArgs)));
+        }
+        // No named args in this path, but define empty map for consistency
+        if (closure.hasKwargsParam) {
+            callScope->define(closure.kwargsParamId, Value::map());
+        }
+
+        // Evaluate body, catching ReturnSignal at function boundary
+        Value result;
+        try {
+            result = eval(*closure.body, callScope, ctx);
+        } catch (ReturnSignal& sig) {
+            result = std::move(sig.value());
+        }
+        currentAstRoot_ = prevRoot;
+        callScope->finalizeCallScope(result);
+        return result;
+    } catch (...) {
+        currentAstRoot_ = prevRoot;
+        throw;
     }
 }
 
 Value Evaluator::callClosureWithNamed(Closure& closure, std::vector<Value> posArgs,
                                        std::vector<std::pair<uint32_t, Value>> namedArgs,
-                                       ExecutionContext* ctx, SourceLocation /*callSite*/) {
-    auto callScope = closure.capturedScope->createChild();
-
-    // Track which named args get matched to regular params
-    std::vector<bool> namedArgUsed(namedArgs.size(), false);
-
-    for (size_t i = 0; i < closure.paramIds.size(); i++) {
-        if (i < posArgs.size()) {
-            // Positionally provided
-            callScope->define(closure.paramIds[i], posArgs[i]);
-        } else {
-            // Check named args
-            bool found = false;
-            for (size_t j = 0; j < namedArgs.size(); j++) {
-                if (namedArgs[j].first == closure.paramIds[i]) {
-                    callScope->define(closure.paramIds[i], namedArgs[j].second);
-                    namedArgUsed[j] = true;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                // Try default
-                if (i >= closure.numRequired &&
-                    (i - closure.numRequired) < closure.defaultExprs.size() &&
-                    closure.defaultExprs[i - closure.numRequired] != nullptr) {
-                    Value def = eval(*closure.defaultExprs[i - closure.numRequired], callScope, ctx);
-                    callScope->define(closure.paramIds[i], def);
-                } else {
-                    callScope->define(closure.paramIds[i], Value::nil());
-                }
-            }
-        }
+                                       ExecutionContext* ctx, SourceLocation callSite) {
+    auto baseScope = closure.scope();
+    if (!baseScope) {
+        throw ScriptError("Closure scope has expired", callSite);
     }
-
-    // Collect remaining positional args into [rest] array
-    if (closure.hasRestParam) {
-        std::vector<Value> restArgs;
-        for (size_t i = closure.paramIds.size(); i < posArgs.size(); i++) {
-            restArgs.push_back(posArgs[i]);
-        }
-        callScope->define(closure.restParamId, Value::array(std::move(restArgs)));
-    }
-
-    // Collect unmatched named args into {kwargs} map
-    if (closure.hasKwargsParam) {
-        auto kwargsMap = Value::map();
-        for (size_t j = 0; j < namedArgs.size(); j++) {
-            if (!namedArgUsed[j]) {
-                kwargsMap.asMap().set(namedArgs[j].first, namedArgs[j].second);
-            }
-        }
-        callScope->define(closure.kwargsParamId, kwargsMap);
+    auto callScope = baseScope->createChild();
+    auto prevRoot = currentAstRoot_;
+    if (closure.astRoot) {
+        currentAstRoot_ = closure.astRoot;
     }
 
     try {
-        return eval(*closure.body, callScope, ctx);
-    } catch (ReturnSignal& sig) {
-        return std::move(sig.value());
+        // Track which named args get matched to regular params
+        std::vector<bool> namedArgUsed(namedArgs.size(), false);
+
+        for (size_t i = 0; i < closure.paramIds.size(); i++) {
+            if (i < posArgs.size()) {
+                // Positionally provided
+                callScope->define(closure.paramIds[i], posArgs[i]);
+            } else {
+                // Check named args
+                bool found = false;
+                for (size_t j = 0; j < namedArgs.size(); j++) {
+                    if (namedArgs[j].first == closure.paramIds[i]) {
+                        callScope->define(closure.paramIds[i], namedArgs[j].second);
+                        namedArgUsed[j] = true;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    // Try default
+                    if (i >= closure.numRequired &&
+                        (i - closure.numRequired) < closure.defaultExprs.size() &&
+                        closure.defaultExprs[i - closure.numRequired] != nullptr) {
+                        Value def = eval(*closure.defaultExprs[i - closure.numRequired], callScope, ctx);
+                        callScope->define(closure.paramIds[i], def);
+                    } else {
+                        callScope->define(closure.paramIds[i], Value::nil());
+                    }
+                }
+            }
+        }
+
+        // Collect remaining positional args into [rest] array
+        if (closure.hasRestParam) {
+            std::vector<Value> restArgs;
+            for (size_t i = closure.paramIds.size(); i < posArgs.size(); i++) {
+                restArgs.push_back(posArgs[i]);
+            }
+            callScope->define(closure.restParamId, Value::array(std::move(restArgs)));
+        }
+
+        // Collect unmatched named args into {kwargs} map
+        if (closure.hasKwargsParam) {
+            auto kwargsMap = Value::map();
+            for (size_t j = 0; j < namedArgs.size(); j++) {
+                if (!namedArgUsed[j]) {
+                    kwargsMap.asMap().set(namedArgs[j].first, namedArgs[j].second);
+                }
+            }
+            callScope->define(closure.kwargsParamId, kwargsMap);
+        }
+
+        Value result;
+        try {
+            result = eval(*closure.body, callScope, ctx);
+        } catch (ReturnSignal& sig) {
+            result = std::move(sig.value());
+        }
+        currentAstRoot_ = prevRoot;
+        callScope->finalizeCallScope(result);
+        return result;
+    } catch (...) {
+        currentAstRoot_ = prevRoot;
+        throw;
     }
 }
 

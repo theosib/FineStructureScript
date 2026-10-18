@@ -13,6 +13,7 @@ class ScriptEngine;
 class ExecutionContext {
 public:
     explicit ExecutionContext(ScriptEngine& engine);
+    ~ExecutionContext();
 
     void set(std::string_view name, Value value);
     Value get(std::string_view name) const;

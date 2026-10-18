@@ -17,7 +17,7 @@ public:
         auto s = scope_.lock();
         if (!s) return Value::nil();
         Value* v = s->lookup(key);
-        return v ? *v : Value::nil();
+        return v ? Scope::ensureStrong(*v) : Value::nil();
     }
     void set(uint32_t key, Value value) override {
         auto s = scope_.lock();

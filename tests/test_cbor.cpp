@@ -141,12 +141,23 @@ TEST_CASE("CBOR symbol round-trip", "[cbor]") {
     uint32_t id = interner.intern("mySymbol");
     auto enc = cborEncode(Value::symbol(id), interner);
 
-    // Should start with tag 22 (0xD6)
-    REQUIRE(enc[0] == 0xD6);
+    // Should start with tag 39 (0xD8, 0x27)
+    REQUIRE(enc.size() >= 2);
+    REQUIRE(enc[0] == 0xD8);
+    REQUIRE(enc[1] == 39);
 
     auto dec = cborDecode(enc, interner);
     REQUIRE(dec.isSymbol());
     REQUIRE(dec.asSymbol() == id);
+}
+
+TEST_CASE("CBOR symbol decodes legacy tag 22", "[cbor]") {
+    auto interner = makeInterner();
+    // Legacy tag 22 (0xD6) followed by text string "stone" (0x65, 's','t','o','n','e')
+    std::vector<uint8_t> legacyData = {0xD6, 0x65, 's', 't', 'o', 'n', 'e'};
+    auto dec = cborDecode(legacyData, interner);
+    REQUIRE(dec.isSymbol());
+    REQUIRE(interner.lookup(dec.asSymbol()) == "stone");
 }
 
 TEST_CASE("CBOR symbol decoded with different interner", "[cbor]") {

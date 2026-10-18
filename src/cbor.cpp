@@ -17,7 +17,8 @@ constexpr uint8_t CBOR_TRUE    = 0xF5;
 constexpr uint8_t CBOR_NULL    = 0xF6;
 constexpr uint8_t CBOR_FLOAT64 = 0xFB;
 
-constexpr uint64_t SYMBOL_TAG  = 22; // custom CBOR tag for finescript symbols
+constexpr uint64_t SYMBOL_TAG        = 39; // RFC 8949 Identifier tag (matches finevox TAG_INTERNED_STRING)
+constexpr uint64_t LEGACY_SYMBOL_TAG = 22; // backward-compatible legacy symbol tag
 
 // ---- Encoder ----
 
@@ -287,7 +288,7 @@ Value decodeItem(DecodeState& s, Interner& interner) {
         }
         case 6: { // tag
             uint64_t tag = readArgument(s, ai);
-            if (tag == SYMBOL_TAG) {
+            if (tag == SYMBOL_TAG || tag == LEGACY_SYMBOL_TAG) {
                 // Symbol: next item must be a text string
                 uint8_t strIb = readByte(s);
                 uint8_t strMajor = strIb >> 5;

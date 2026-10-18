@@ -12,10 +12,28 @@ class Interner;
 class ScriptEngine;
 class ExecutionContext;
 
+/// Pre-interned built-in method and property symbols cached per ScriptEngine.
+struct PreInternedSymbols {
+    uint32_t get = 0, set = 0, has = 0, remove = 0, keys = 0;
+    uint32_t values = 0, length = 0, push = 0, pop = 0;
+    uint32_t setMethod = 0, slice = 0, contains = 0, sort = 0;
+    uint32_t map = 0, filter = 0, foreach = 0;
+    // String method symbols
+    uint32_t insert = 0, del = 0, replace = 0, split = 0;
+    uint32_t substr = 0, find = 0, upper = 0, lower = 0, trim = 0;
+    uint32_t starts_with = 0, ends_with = 0, char_at = 0;
+    uint32_t sort_by = 0;
+    uint32_t self = 0;
+
+    void init(Interner& interner);
+};
+
 class Evaluator {
 public:
     Evaluator(Interner& interner, std::shared_ptr<Scope> globalScope,
               ScriptEngine* engine = nullptr);
+    Evaluator(Interner& interner, std::shared_ptr<Scope> globalScope,
+              ScriptEngine* engine, const PreInternedSymbols& syms);
 
     Value eval(const AstNode& node, std::shared_ptr<Scope> scope,
                ExecutionContext* ctx = nullptr);
@@ -49,6 +67,8 @@ private:
     uint32_t sym_self_;
 
     void preInternSymbols();
+    void applyPreInternedSymbols(const PreInternedSymbols& syms);
+    void ensureInterned(const AstNode& node) const;
 
     /// Check if a value is a closure whose first parameter is named "self".
     bool isAutoMethod(const Value& val) const;

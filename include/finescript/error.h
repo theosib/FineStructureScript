@@ -11,12 +11,16 @@ class Value;
 /// Runtime script error with source location.
 class ScriptError : public std::runtime_error {
 public:
-    ScriptError(const std::string& message, SourceLocation loc)
-        : std::runtime_error(loc.toString() + ": " + message), location_(loc) {}
+    ScriptError(const std::string& message, SourceLocation loc = SourceLocation{})
+        : std::runtime_error(loc.toString() + ": " + message),
+          rawMessage_(message),
+          location_(loc) {}
 
     const SourceLocation& location() const { return location_; }
+    const std::string& rawMessage() const { return rawMessage_; }
 
 private:
+    std::string rawMessage_;
     SourceLocation location_;
 };
 

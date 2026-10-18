@@ -8,6 +8,8 @@
 
 namespace finescript {
 
+class Interner;
+
 enum class AstNodeKind {
     IntLit,
     FloatLit,
@@ -52,7 +54,22 @@ struct AstNode {
     std::vector<std::unique_ptr<AstNode>> children;
     std::string op;
     std::vector<std::string> nameParts;
+
+    // Pre-interned symbol cache (bound to cachedInterner)
+    mutable const Interner* cachedInterner = nullptr;
+    mutable uint32_t cachedSymbolId = 0;
+    mutable std::vector<uint32_t> cachedNamePartIds;
+    mutable uint32_t cachedRestParamId = 0;
+    mutable uint32_t cachedKwargsParamId = 0;
+    mutable bool cachedHasRestParam = false;
+    mutable bool cachedHasKwargsParam = false;
 };
+
+/// Intern identifiers on a single AST node against `interner`.
+void internAstNode(const AstNode& node, Interner& interner);
+
+/// Recursively pre-intern all identifiers in an AST subtree against `interner`.
+void internAstSymbols(const AstNode& root, Interner& interner);
 
 // Factory functions
 std::unique_ptr<AstNode> makeIntLit(int64_t val, SourceLocation loc);

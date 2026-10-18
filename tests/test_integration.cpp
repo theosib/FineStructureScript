@@ -799,3 +799,103 @@ TEST_CASE("Integration: resource finder with function definition", "[integration
 
     std::filesystem::remove(tmpFile);
 }
+
+// === Phase R1.1: Memory leak freedom, Error locations, and Interner switching ===
+
+TEST_CASE("Integration: ExecutionContext destruction frees closures, scopes, and AST", "[integration][memory]") {
+    ScriptEngine engine;
+    std::weak_ptr<Scope> weakCtxScope;
+    std::weak_ptr<Closure> weakFn;
+    std::weak_ptr<const AstNode> weakAst;
+
+    {
+        ExecutionContext ctx(engine);
+        weakCtxScope = ctx.scope();
+
+        auto r = run(engine, ctx, R"(
+            fn fact [n] do
+                if (n <= 1) {return 1}
+                (n * {fact (n - 1)})
+            end
+            on :interact do
+                fact 5
+            end
+            ~fact
+        )");
+        REQUIRE(r.success);
+        REQUIRE(r.returnValue.isClosure());
+        weakFn = r.returnValue.closurePtr();
+        weakAst = r.returnValue.asClosure().astRoot;
+    }
+
+    CHECK(weakCtxScope.expired());
+    CHECK(weakFn.expired());
+    CHECK(weakAst.expired());
+}
+
+TEST_CASE("Integration: type mismatch errors preserve non-zero source line and column", "[integration][errors]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    // Line 1: set x 10
+    // Line 2: set y "not_a_number"
+    // Line 3: min x y
+    auto result = run(engine, ctx, "set x 10\nset y \"not_a_number\"\nmin x y\n");
+    CHECK_FALSE(result.success);
+    CHECK(result.errorLine == 3);
+    CHECK(result.errorColumn > 0);
+
+    // Type mismatch inside a function called on line 5, failing at line 3
+    auto result2 = run(engine, ctx,
+        "fn compute [a] do\n"
+        "    set tmp 1\n"
+        "    sqrt a\n"
+        "end\n"
+        "compute \"bad_arg\"\n");
+    CHECK_FALSE(result2.success);
+    CHECK(result2.errorLine == 3);
+    CHECK(result2.errorColumn > 0);
+}
+
+TEST_CASE("Integration: callFunction preserves ScriptError source location on type mismatch", "[integration][errors]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    auto r = run(engine, ctx,
+        "fn badMath [x] do\n"
+        "    clamp x 0 10\n"
+        "end\n"
+        "~badMath\n");
+    REQUIRE(r.success);
+    REQUIRE(r.returnValue.isClosure());
+
+    try {
+        engine.callFunction(r.returnValue, {Value::string("oops")}, ctx);
+        FAIL("Expected ScriptError");
+    } catch (const ScriptError& err) {
+        CHECK(err.location().line == 2);
+        CHECK(err.location().column > 0);
+    }
+}
+
+TEST_CASE("Integration: setInterner re-resolves cached AST symbols and built-in symbols", "[integration][interner]") {
+    ScriptEngine engine;
+    auto compiled = engine.parseString(R"(
+        set m {=name "Alice"}
+        m.get :name
+    )", "interner_switch_test");
+
+    DefaultInterner customInterner;
+    // Populate some dummy strings in customInterner so symbol IDs differ from default interner
+    customInterner.intern("padding_0");
+    customInterner.intern("padding_1");
+    customInterner.intern("padding_2");
+
+    engine.setInterner(&customInterner);
+
+    ExecutionContext ctx(engine);
+    auto res = engine.execute(*compiled, ctx);
+    REQUIRE(res.success);
+    CHECK(res.returnValue.asString() == "Alice");
+}
+
