@@ -536,3 +536,14 @@ TEST_CASE("Builtins: format in string interpolation", "[builtins][format]") {
     CHECK(r.success);
     CHECK(r.returnValue.asString() == "Health: 50/100");
 }
+
+TEST_CASE("to_sym builds map keys from ids and strings", "[builtins]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    auto result = engine.executeCommand(R"(set m {=x 1}; m.set {to_sym 42} :found; m.get {to_sym 42})", ctx);
+    REQUIRE(result.success);
+    REQUIRE(result.returnValue.isSymbol());
+    auto same = engine.executeCommand(R"(eq {to_sym "abc"} :abc)", ctx);
+    REQUIRE(same.success);
+    REQUIRE(same.returnValue.asBool());
+}

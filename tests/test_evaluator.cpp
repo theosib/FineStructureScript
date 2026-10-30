@@ -1832,3 +1832,193 @@ TEST_CASE("Object factory with methods does not leak Scope or Map", "[evaluator]
 }
 
 
+
+// ---- Control flow: exception-free return, break, continue ----
+
+TEST_CASE("Return from nested loops inside a function", "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+fn find [] do
+    for i in [1 2 3] do
+        for j in [10 20 30] do
+            if ((i * j) == 40) do
+                return [i j]
+            end
+        end
+    end
+    return :none
+end
+find
+)");
+    REQUIRE(v.asArray()[0].asInt() == 2);
+    REQUIRE(v.asArray()[1].asInt() == 20);
+}
+
+TEST_CASE("Statements after a return do not run", "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+set hits 0
+fn f [] do
+    set hits (hits + 1)
+    return 7
+    set hits 100
+end
+[{f} hits]
+)");
+    REQUIRE(v.asArray()[0].asInt() == 7);
+    REQUIRE(v.asArray()[1].asInt() == 1);
+}
+
+TEST_CASE("Return inside match and if arms", "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+fn pick [x] do
+    match x
+        :a do
+            return 1
+        end
+        :b do
+            if true do
+                return 2
+            end
+        end
+        _ do
+            return 3
+        end
+    end
+    return 99
+end
+[{pick :a} {pick :b} {pick :c}]
+)");
+    REQUIRE(v.asArray()[0].asInt() == 1);
+    REQUIRE(v.asArray()[1].asInt() == 2);
+    REQUIRE(v.asArray()[2].asInt() == 3);
+}
+
+TEST_CASE("Return in expression position still unwinds", "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+set log []
+fn note [x] do
+    log.push x
+    x
+end
+fn f [] do
+    note {return 5}
+    note 6
+end
+[{f} log.length]
+)");
+    REQUIRE(v.asArray()[0].asInt() == 5);
+    REQUIRE(v.asArray()[1].asInt() == 0);
+}
+
+TEST_CASE("Return from a closure called by array method stops only that closure",
+          "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+fn f [] do
+    set out {[1 2 3].map fn [x] do
+        if (x == 2) do
+            return 20
+        end
+        x
+    end}
+    return out
+end
+f
+)");
+    REQUIRE(v.asArray()[0].asInt() == 1);
+    REQUIRE(v.asArray()[1].asInt() == 20);
+    REQUIRE(v.asArray()[2].asInt() == 3);
+}
+
+TEST_CASE("Early return in recursion", "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+fn fib [n] do
+    if (n < 2) do
+        return n
+    end
+    return ({fib (n - 1)} + {fib (n - 2)})
+end
+fib 15
+)");
+    REQUIRE(v.asInt() == 610);
+}
+
+TEST_CASE("Top-level return ends the script", "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+set x 1
+return 42
+set x 2
+)");
+    REQUIRE(v.asInt() == 42);
+    REQUIRE(env.run("x").asInt() == 1);
+}
+
+TEST_CASE("Break leaves only the innermost loop", "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+set n 0
+for i in [1 2 3] do
+    for j in [1 2 3] do
+        if (j == 2) do
+            break
+        end
+        set n (n + 1)
+    end
+    set n (n + 10)
+end
+n
+)");
+    REQUIRE(v.asInt() == 33);
+}
+
+TEST_CASE("Continue skips the rest of the body", "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+set n 0
+set i 0
+while (i < 5) do
+    set i (i + 1)
+    if ((i % 2) == 0) do
+        continue
+    end
+    set n (n + i)
+end
+n
+)");
+    REQUIRE(v.asInt() == 9);
+}
+
+TEST_CASE("Break outside a loop is an error", "[evaluator][control]") {
+    TestEnv env;
+    REQUIRE_THROWS(env.run("break"));
+}
+
+TEST_CASE("Break cannot escape a closure into the caller's loop", "[evaluator][control]") {
+    TestEnv env;
+    REQUIRE_THROWS(env.run(R"(
+for i in [1 2] do
+    [1].foreach fn [x] do
+        break
+    end
+end
+)"));
+}
+
+TEST_CASE("Return value of for loop used inside a function body position",
+          "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+fn f [] do
+    for i in [1 2 3] do
+        if (i == 2) { return i }
+    end
+end
+f
+)");
+    REQUIRE(v.asInt() == 2);
+}

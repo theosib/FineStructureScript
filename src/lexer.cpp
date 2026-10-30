@@ -60,6 +60,8 @@ const char* tokenTypeName(TokenType type) {
         case TokenType::Set: return "Set";
         case TokenType::Let: return "Let";
         case TokenType::Return: return "Return";
+        case TokenType::Break: return "Break";
+        case TokenType::Continue: return "Continue";
         case TokenType::Source: return "Source";
         case TokenType::Underscore: return "Underscore";
         case TokenType::Eof: return "Eof";
@@ -175,6 +177,8 @@ TokenType Lexer::classifyKeyword(std::string_view text) const {
     if (text == "set") return TokenType::Set;
     if (text == "let") return TokenType::Let;
     if (text == "return") return TokenType::Return;
+    if (text == "break") return TokenType::Break;
+    if (text == "continue") return TokenType::Continue;
     if (text == "source") return TokenType::Source;
     if (text == "true") return TokenType::BoolTrue;
     if (text == "false") return TokenType::BoolFalse;

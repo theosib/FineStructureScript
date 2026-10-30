@@ -65,7 +65,13 @@ match scrutinee
     _ default_body
 end
 return val
+break                          # innermost for/while (statement position only)
+continue
 ```
+
+`return`/`break`/`continue` in statement position unwind with a flag, so they cost about the same
+as a normal call. `return` nested inside an expression (e.g. as a call argument) falls back to a
+C++ exception (~15us) but behaves identically. `break`/`continue` cannot cross a closure boundary.
 
 ## Operators (inside parens, by precedence low→high)
 
@@ -146,7 +152,9 @@ Math: `abs` `min` `max` `clamp x lo hi` `floor` `ceil` `round` `sqrt` `pow` `sin
 
 String: `str_length` `str_concat a b ...` `str_substr s start [len]` `str_find s needle` `str_upper` `str_lower` `format fmt args...`
 
-Type: `to_int` `to_float` `to_str` `to_string` `to_bool` `type`
+Type: `to_int` `to_float` `to_str` `to_string` `to_bool` `to_sym` `type`
+
+`to_sym val` builds a symbol from any value; use it to key maps by id (`m.set {to_sym id} x`). Symbols are interned forever, so don't mint them from unbounded data such as block coordinates.
 
 Comparison (prefix): `eq` `ne` `lt` `gt` `le` `ge`
 

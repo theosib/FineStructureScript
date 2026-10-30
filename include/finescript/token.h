@@ -71,6 +71,8 @@ enum class TokenType {
     Set,
     Let,
     Return,
+    Break,
+    Continue,
     Source,
     Underscore,
 

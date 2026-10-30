@@ -259,6 +259,13 @@ void registerTypeBuiltins(ScriptEngine& engine) {
         return Value::string(args[0].toString());
     });
 
+    // Maps are symbol-keyed, so ids and other computed keys need a way in.
+    engine.registerFunction("to_sym", [](ExecutionContext& ctx, const std::vector<Value>& args) -> Value {
+        if (args.empty()) return Value::nil();
+        if (args[0].isSymbol()) return args[0];
+        return Value::symbol(ctx.engine().intern(args[0].toString()));
+    });
+
     engine.registerFunction("to_string", [](ExecutionContext&, const std::vector<Value>& args) -> Value {
         if (args.empty()) return Value::string("");
         return Value::string(args[0].toString());

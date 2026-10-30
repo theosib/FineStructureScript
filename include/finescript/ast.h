@@ -35,6 +35,8 @@ enum class AstNodeKind {
     Fn,
     On,
     Return,
+    Break,
+    Continue,
     Source,
     Index,
     Ref,
@@ -50,6 +52,7 @@ struct AstNode {
     std::string stringValue;
     bool boolValue = false;
     bool hasElse = false;
+    bool fastControl = false;  // Return/Break/Continue in statement position: no exception needed
 
     std::vector<std::unique_ptr<AstNode>> children;
     std::string op;
@@ -99,6 +102,12 @@ std::unique_ptr<AstNode> makeWhile(std::unique_ptr<AstNode> condition, std::uniq
 std::unique_ptr<AstNode> makeMatch(std::unique_ptr<AstNode> scrutinee, std::vector<std::unique_ptr<AstNode>> arms, SourceLocation loc);
 std::unique_ptr<AstNode> makeOn(std::string eventName, std::unique_ptr<AstNode> body, SourceLocation loc);
 std::unique_ptr<AstNode> makeReturn(std::unique_ptr<AstNode> value, SourceLocation loc);
+std::unique_ptr<AstNode> makeBreak(SourceLocation loc);
+std::unique_ptr<AstNode> makeContinue(SourceLocation loc);
+
+/// Mark Return/Break/Continue nodes reachable only through statement-structured
+/// nodes so the evaluator can unwind them with a flag instead of a C++ exception.
+void analyzeControlFlow(AstNode& root);
 std::unique_ptr<AstNode> makeSource(std::unique_ptr<AstNode> filename, SourceLocation loc);
 std::unique_ptr<AstNode> makeRef(std::unique_ptr<AstNode> operand, SourceLocation loc);
 std::unique_ptr<AstNode> makeMapLit(std::vector<std::string> keys, std::vector<std::unique_ptr<AstNode>> values, SourceLocation loc);

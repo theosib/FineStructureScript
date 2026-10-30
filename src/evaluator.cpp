@@ -198,6 +198,7 @@ Value Evaluator::eval(std::shared_ptr<AstNode> root, std::shared_ptr<Scope> scop
     currentAstRoot_ = root;
     try {
         Value result = eval(*root, scope, ctx);
+        takePendingReturn(result);
         currentAstRoot_ = prevRoot;
         return result;
     } catch (...) {
@@ -237,6 +238,8 @@ Value Evaluator::eval(const AstNode& node, std::shared_ptr<Scope> scope,
             case AstNodeKind::Match:       return evalMatch(node, scope, ctx);
             case AstNodeKind::On:          return evalOn(node, scope, ctx);
             case AstNodeKind::Return:      return evalReturn(node, scope, ctx);
+            case AstNodeKind::Break:
+            case AstNodeKind::Continue:    return evalLoopControl(node);
             case AstNodeKind::Source:       return evalSource(node, scope, ctx);
         }
     } catch (const ScriptError& e) {
@@ -562,6 +565,7 @@ Value Evaluator::evalBlock(const AstNode& node, std::shared_ptr<Scope> scope,
     Value result;
     for (auto& child : node.children) {
         result = eval(*child, scope, ctx);
+        if (pendingControl_ != PendingControl::None) break;
     }
     return result;
 }
@@ -770,6 +774,7 @@ Value Evaluator::evalFor(const AstNode& node, std::shared_ptr<Scope> scope,
         for (const auto& elem : iterable.asArray()) {
             loopScope->define(varSym, elem);
             result = eval(*node.children[1], loopScope, ctx);
+            if (loopShouldExit()) break;
         }
     } else {
         throw ScriptError("Cannot iterate over " + iterable.typeName(), node.loc);
@@ -787,6 +792,7 @@ Value Evaluator::evalWhile(const AstNode& node, std::shared_ptr<Scope> scope,
         Value cond = eval(*node.children[0], scope, ctx);
         if (!cond.truthy()) break;
         result = eval(*node.children[1], scope, ctx);
+        if (loopShouldExit()) break;
     }
     return result;
 }
@@ -847,7 +853,47 @@ Value Evaluator::evalReturn(const AstNode& node, std::shared_ptr<Scope> scope,
     if (!node.children.empty()) {
         val = eval(*node.children[0], scope, ctx);
     }
+    if (node.fastControl) {
+        pendingControl_ = PendingControl::Return;
+        pendingReturnValue_ = std::move(val);
+        return Value::nil();
+    }
     throw ReturnSignal(std::move(val));
+}
+
+Value Evaluator::evalLoopControl(const AstNode& node) {
+    if (!node.fastControl) {
+        throw ScriptError(std::string(node.kind == AstNodeKind::Break ? "break" : "continue") +
+                              " must be a statement inside a for/while loop",
+                          node.loc);
+    }
+    pendingControl_ = node.kind == AstNodeKind::Break ? PendingControl::Break
+                                                      : PendingControl::Continue;
+    return Value::nil();
+}
+
+bool Evaluator::takePendingReturn(Value& out) {
+    if (pendingControl_ != PendingControl::Return) return false;
+    pendingControl_ = PendingControl::None;
+    out = std::move(pendingReturnValue_);
+    pendingReturnValue_ = Value::nil();
+    return true;
+}
+
+bool Evaluator::loopShouldExit() {
+    switch (pendingControl_) {
+        case PendingControl::None:
+            return false;
+        case PendingControl::Continue:
+            pendingControl_ = PendingControl::None;
+            return false;
+        case PendingControl::Break:
+            pendingControl_ = PendingControl::None;
+            return true;
+        case PendingControl::Return:
+            return true;  // Leave it pending for the enclosing call boundary
+    }
+    return false;
 }
 
 // -- Source --
@@ -944,6 +990,7 @@ Value Evaluator::callClosure(Closure& closure, std::vector<Value> args,
         Value result;
         try {
             result = eval(*closure.body, callScope, ctx);
+            takePendingReturn(result);
         } catch (ReturnSignal& sig) {
             result = std::move(sig.value());
         }
@@ -1025,6 +1072,7 @@ Value Evaluator::callClosureWithNamed(Closure& closure, std::vector<Value> posAr
         Value result;
         try {
             result = eval(*closure.body, callScope, ctx);
+            takePendingReturn(result);
         } catch (ReturnSignal& sig) {
             result = std::move(sig.value());
         }

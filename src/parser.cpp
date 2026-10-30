@@ -224,6 +224,78 @@ std::unique_ptr<AstNode> makeReturn(std::unique_ptr<AstNode> value, SourceLocati
     return n;
 }
 
+std::unique_ptr<AstNode> makeBreak(SourceLocation loc) {
+    auto n = std::make_unique<AstNode>();
+    n->kind = AstNodeKind::Break;
+    n->loc = loc;
+    return n;
+}
+
+std::unique_ptr<AstNode> makeContinue(SourceLocation loc) {
+    auto n = std::make_unique<AstNode>();
+    n->kind = AstNodeKind::Continue;
+    n->loc = loc;
+    return n;
+}
+
+namespace {
+
+// Descends only through nodes whose children are executed as statements, so a
+// marked node is never unwinding through a half-evaluated expression.
+void markStatementControl(AstNode& node, bool inLoop) {
+    switch (node.kind) {
+        case AstNodeKind::Return:
+            node.fastControl = true;
+            break;
+        case AstNodeKind::Break:
+        case AstNodeKind::Continue:
+            node.fastControl = inLoop;
+            break;
+        case AstNodeKind::Block:
+            for (auto& child : node.children) markStatementControl(*child, inLoop);
+            break;
+        case AstNodeKind::If: {
+            size_t count = node.children.size();
+            size_t pairs = node.hasElse ? (count - 1) / 2 : count / 2;
+            for (size_t i = 0; i < pairs; i++) {
+                markStatementControl(*node.children[i * 2 + 1], inLoop);
+            }
+            if (node.hasElse) markStatementControl(*node.children.back(), inLoop);
+            break;
+        }
+        case AstNodeKind::For:
+        case AstNodeKind::While:
+            markStatementControl(*node.children[1], true);
+            break;
+        case AstNodeKind::Match:
+            for (size_t i = 2; i < node.children.size(); i += 2) {
+                markStatementControl(*node.children[i], inLoop);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+}  // namespace
+
+void analyzeControlFlow(AstNode& root) {
+    // Each function/handler body is its own unwinding root; the script body is too.
+    markStatementControl(root, false);
+    std::vector<AstNode*> pending{&root};
+    while (!pending.empty()) {
+        AstNode* node = pending.back();
+        pending.pop_back();
+        if ((node->kind == AstNodeKind::Fn || node->kind == AstNodeKind::On) &&
+            !node->children.empty()) {
+            markStatementControl(*node->children.back(), false);
+        }
+        for (auto& child : node->children) {
+            if (child) pending.push_back(child.get());
+        }
+    }
+}
+
 std::unique_ptr<AstNode> makeSource(std::unique_ptr<AstNode> filename, SourceLocation loc) {
     auto n = std::make_unique<AstNode>();
     n->kind = AstNodeKind::Source;
@@ -304,6 +376,8 @@ private:
             case TokenType::Match:     return parseMatch();
             case TokenType::On:        return parseOn();
             case TokenType::Return:    return parseReturn();
+            case TokenType::Break:     return makeBreak(lexer_.next().location);
+            case TokenType::Continue:  return makeContinue(lexer_.next().location);
             case TokenType::Source:    return parseSource();
             case TokenType::Do:        return parseDoBlock();
             case TokenType::LeftBrace: return parseBraceExpr();
@@ -892,7 +966,8 @@ private:
             case TokenType::Elif: case TokenType::Else: case TokenType::For:
             case TokenType::In: case TokenType::While: case TokenType::Match:
             case TokenType::On: case TokenType::Do: case TokenType::End:
-            case TokenType::Return: case TokenType::Source: case TokenType::And:
+            case TokenType::Return: case TokenType::Break: case TokenType::Continue:
+            case TokenType::Source: case TokenType::And:
             case TokenType::Or: case TokenType::Not: case TokenType::BoolTrue:
             case TokenType::BoolFalse: case TokenType::NilLiteral:
             case TokenType::Underscore:
@@ -984,7 +1059,9 @@ private:
 
 std::unique_ptr<AstNode> Parser::parse(std::string_view source, uint16_t fileId) {
     ParserImpl parser(source, fileId);
-    return parser.parseProgram();
+    auto root = parser.parseProgram();
+    analyzeControlFlow(*root);
+    return root;
 }
 
 std::unique_ptr<AstNode> Parser::parseExpression(std::string_view source, uint16_t fileId) {

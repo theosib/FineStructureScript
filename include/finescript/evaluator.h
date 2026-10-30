@@ -54,6 +54,12 @@ private:
     ScriptEngine* engine_;
     std::shared_ptr<const AstNode> currentAstRoot_;
 
+    // Exception-free unwinding for statement-position return/break/continue
+    // (AstNode::fastControl). Statement evaluators stop as soon as this is set.
+    enum class PendingControl : uint8_t { None, Return, Break, Continue };
+    PendingControl pendingControl_ = PendingControl::None;
+    Value pendingReturnValue_;
+
     // Pre-interned common symbols for fast dispatch
     uint32_t sym_get_, sym_set_, sym_has_, sym_remove_, sym_keys_;
     uint32_t sym_values_, sym_length_, sym_push_, sym_pop_;
@@ -101,6 +107,12 @@ private:
     Value evalMatch(const AstNode& node, std::shared_ptr<Scope> scope, ExecutionContext* ctx);
     Value evalOn(const AstNode& node, std::shared_ptr<Scope> scope, ExecutionContext* ctx);
     Value evalReturn(const AstNode& node, std::shared_ptr<Scope> scope, ExecutionContext* ctx);
+    Value evalLoopControl(const AstNode& node);
+
+    /// Consume a pending exception-free `return`, if any.
+    bool takePendingReturn(Value& out);
+    /// After a loop body: true if the loop must stop iterating.
+    bool loopShouldExit();
     Value evalSource(const AstNode& node, std::shared_ptr<Scope> scope, ExecutionContext* ctx);
 
     Value callClosure(Closure& closure, std::vector<Value> args,
