@@ -72,7 +72,7 @@ std::unique_ptr<CompiledScript> ScriptEngine::parseString(std::string_view sourc
                                                            std::string_view name) {
     auto script = std::make_unique<CompiledScript>();
     script->name = std::string(name);
-    script->root = Parser::parse(source);
+    script->root = Parser::parse(source, registerSourceFile(name));
     if (script->root) {
         internAstSymbols(*script->root, interner());
     }

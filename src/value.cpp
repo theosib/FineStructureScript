@@ -1,4 +1,6 @@
 #include "finescript/value.h"
+#include <mutex>
+#include <vector>
 #include "finescript/map_data.h"
 #include "finescript/interner.h"
 #include "finescript/native_function.h"
@@ -27,9 +29,40 @@ const Value& ReturnSignal::value() const { return impl_->val; }
 
 // -- SourceLocation --
 
+namespace {
+
+std::mutex& sourceFileMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::vector<std::string>& sourceFiles() {
+    static std::vector<std::string> names{""};
+    return names;
+}
+
+}  // namespace
+
+uint16_t registerSourceFile(std::string_view name) {
+    std::lock_guard<std::mutex> lock(sourceFileMutex());
+    auto& names = sourceFiles();
+    for (size_t i = 1; i < names.size(); ++i) {
+        if (names[i] == name) return static_cast<uint16_t>(i);
+    }
+    if (names.size() >= UINT16_MAX) return 0;
+    names.emplace_back(name);
+    return static_cast<uint16_t>(names.size() - 1);
+}
+
 std::string SourceLocation::toString() const {
-    return "<file:" + std::to_string(fileId) + ">:" +
-           std::to_string(line) + ":" + std::to_string(column);
+    std::string file;
+    {
+        std::lock_guard<std::mutex> lock(sourceFileMutex());
+        const auto& names = sourceFiles();
+        if (fileId != 0 && fileId < names.size()) file = names[fileId];
+    }
+    if (file.empty()) file = "<script>";
+    return file + ":" + std::to_string(line) + ":" + std::to_string(column);
 }
 
 // -- Value static factories --

@@ -547,3 +547,12 @@ TEST_CASE("to_sym builds map keys from ids and strings", "[builtins]") {
     REQUIRE(same.success);
     REQUIRE(same.returnValue.asBool());
 }
+
+TEST_CASE("Script errors name the file they came from", "[builtins]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    auto script = engine.parseString("set x nil\nset y x[0]\n", "scripts/broken.fsc");
+    auto result = engine.execute(*script, ctx);
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.error.find("scripts/broken.fsc:2") != std::string::npos);
+}

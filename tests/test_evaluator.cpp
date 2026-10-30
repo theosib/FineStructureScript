@@ -2022,3 +2022,24 @@ f
 )");
     REQUIRE(v.asInt() == 2);
 }
+
+TEST_CASE("Return takes a whole prefix expression", "[evaluator][control]") {
+    TestEnv env;
+    auto v = env.run(R"(
+fn add [a b] (a + b)
+fn f [] do
+    return add 2 3
+end
+f
+)");
+    REQUIRE(v.asInt() == 5);
+}
+
+TEST_CASE("Return still accepts single values", "[evaluator][control]") {
+    TestEnv env;
+    REQUIRE(env.run("fn f [] do\n return 7\nend\nf").asInt() == 7);
+    REQUIRE(env.run("fn g [] do\n return (1 + 2)\nend\ng").asInt() == 3);
+    REQUIRE(env.run("fn h [] do\n return [1 2]\nend\nh").asArray().size() == 2);
+    REQUIRE(env.run("fn add [a b] (a + b)\nfn i [] do\n return {add 1 1}\nend\ni").asInt() == 2);
+    REQUIRE(env.run("fn j [] do\n return\nend\nj").isNil());
+}

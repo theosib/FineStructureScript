@@ -69,6 +69,8 @@ break                          # innermost for/while (statement position only)
 continue
 ```
 
+`return` takes a whole prefix expression: `return f x` returns the call's result.
+
 `return`/`break`/`continue` in statement position unwind with a flag, so they cost about the same
 as a normal call. `return` nested inside an expression (e.g. as a call argument) falls back to a
 C++ exception (~15us) but behaves identically. `break`/`continue` cannot cross a closure boundary.

@@ -909,7 +909,9 @@ private:
         if (isStatementTerminator()) {
             return makeReturn(nullptr, loc);
         }
-        return makeReturn(parseAtom(), loc);
+        // A whole prefix expression, so `return f x` returns the call's result
+        // rather than calling f with no arguments and dropping x.
+        return makeReturn(parsePrefixCall(), loc);
     }
 
     std::unique_ptr<AstNode> parseSource() {
