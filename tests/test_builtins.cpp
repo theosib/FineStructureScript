@@ -143,6 +143,16 @@ TEST_CASE("Builtins: clamp", "[builtins][math]") {
     CHECK(run(engine, ctx, "clamp 2.0 0.0 1.0").returnValue.asFloat() == Catch::Approx(1.0));
 }
 
+TEST_CASE("Builtins: symbols become strings by name", "[builtins][type]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    CHECK(run(engine, ctx, "to_str :timber").returnValue.asString() == ":timber");
+    CHECK(run(engine, ctx, "to_string :timber").returnValue.asString() == ":timber");
+    CHECK(run(engine, ctx, "str_concat \"a \" :timber").returnValue.asString() == "a :timber");
+    CHECK(run(engine, ctx, "to_str [:a :b]").returnValue.asString().find(":a") != std::string::npos);
+    CHECK(run(engine, ctx, "to_sym :timber").returnValue.asSymbol() == engine.intern("timber"));
+}
+
 TEST_CASE("Builtins: to_string", "[builtins][type]") {
     ScriptEngine engine;
     ExecutionContext ctx(engine);

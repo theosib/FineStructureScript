@@ -175,10 +175,10 @@ void registerStringBuiltins(ScriptEngine& engine) {
         return Value::integer(static_cast<int64_t>(args[0].asString().size()));
     });
 
-    engine.registerFunction("str_concat", [](ExecutionContext&, const std::vector<Value>& args) -> Value {
+    engine.registerFunction("str_concat", [](ExecutionContext& ctx, const std::vector<Value>& args) -> Value {
         std::string result;
         for (auto& a : args) {
-            result += a.toString();
+            result += a.toString(&ctx.engine().interner());
         }
         return Value::string(std::move(result));
     });
@@ -254,21 +254,22 @@ void registerTypeBuiltins(ScriptEngine& engine) {
         return Value::nil();
     });
 
-    engine.registerFunction("to_str", [](ExecutionContext&, const std::vector<Value>& args) -> Value {
+    engine.registerFunction("to_str", [](ExecutionContext& ctx, const std::vector<Value>& args) -> Value {
         if (args.empty()) return Value::string("");
-        return Value::string(args[0].toString());
+        return Value::string(args[0].toString(&ctx.engine().interner()));
     });
 
     // Maps are symbol-keyed, so ids and other computed keys need a way in.
     engine.registerFunction("to_sym", [](ExecutionContext& ctx, const std::vector<Value>& args) -> Value {
         if (args.empty()) return Value::nil();
         if (args[0].isSymbol()) return args[0];
+        if (args[0].isSymbol()) return args[0];
         return Value::symbol(ctx.engine().intern(args[0].toString()));
     });
 
-    engine.registerFunction("to_string", [](ExecutionContext&, const std::vector<Value>& args) -> Value {
+    engine.registerFunction("to_string", [](ExecutionContext& ctx, const std::vector<Value>& args) -> Value {
         if (args.empty()) return Value::string("");
-        return Value::string(args[0].toString());
+        return Value::string(args[0].toString(&ctx.engine().interner()));
     });
 
     engine.registerFunction("to_bool", [](ExecutionContext&, const std::vector<Value>& args) -> Value {
