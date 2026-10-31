@@ -16,6 +16,11 @@ public:
     bool atEnd() const;
     SourceLocation currentLocation() const;
 
+    /// Brackets make newlines insignificant, but a block's statements still end at them,
+    /// even with the block inside brackets. Returns what leaveBlock needs to put back.
+    int enterBlock();
+    void leaveBlock(int outerDepth);
+
 private:
     std::string source_;  // own a copy for stable storage
     size_t pos_ = 0;

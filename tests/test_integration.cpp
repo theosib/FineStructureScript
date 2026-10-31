@@ -899,3 +899,108 @@ TEST_CASE("Integration: setInterner re-resolves cached AST symbols and built-in 
     CHECK(res.returnValue.asString() == "Alice");
 }
 
+
+// === Blocks inside brackets ===
+
+TEST_CASE("Integration: a block inside brackets still ends statements at newlines", "[integration]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    auto result = run(engine, ctx, R"(
+set log []
+fn note [v] do
+    log.push v
+end
+set handlers [
+    fn [] do
+        note 1
+        note 2
+    end
+    fn [] do
+        note 3
+    end
+]
+set first handlers[0]
+first
+log.length
+)");
+    REQUIRE(result.success);
+    CHECK(result.returnValue.asInt() == 2);
+}
+
+TEST_CASE("Integration: every kind of block inside brackets keeps its lines apart", "[integration]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    auto result = run(engine, ctx, R"(
+set log []
+fn note [v] do
+    log.push v
+end
+set box {=run fn [n] do
+    if (n == 0) do
+        note :a
+        note :b
+    elif (n == 1) do
+        note :c
+        note :d
+    else do
+        note :e
+        note :f
+    end
+    for i in (0..2) do
+        note i
+        note i
+    end
+    match n
+        0 do
+            note :g
+            note :h
+        end
+        _ { note :i }
+    end
+end =after 7}
+box.run 0
+box.run 2
+[log.length box.after]
+)");
+    REQUIRE(result.success);
+    REQUIRE(result.returnValue.isArray());
+    CHECK(result.returnValue.asArray()[0].asInt() == 15);
+    CHECK(result.returnValue.asArray()[1].asInt() == 7);
+}
+
+TEST_CASE("Integration: brackets go on ignoring newlines after a block closes", "[integration]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    auto result = run(engine, ctx, R"(
+set values [
+    1
+    fn [] do
+        2
+    end
+    3
+]
+values.length
+)");
+    REQUIRE(result.success);
+    CHECK(result.returnValue.asInt() == 3);
+}
+
+TEST_CASE("Integration: a call in braces can wrap across lines", "[integration]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    auto result = run(engine, ctx, R"(
+fn add3 [a b c] do
+    return (a + b + c)
+end
+set total {add3 1
+    2
+    3}
+total
+)");
+    REQUIRE(result.success);
+    CHECK(result.returnValue.asInt() == 6);
+}

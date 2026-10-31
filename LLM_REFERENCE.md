@@ -11,7 +11,8 @@ Prefix-first: `verb arg arg ...`. Three bracket types with distinct roles:
 
 Three symbol sigils: `name` (scope lookup), `:name` (literal symbol), `=name` (key specifier for map literals, named params, default params).
 
-Newline or `;` separates statements. `#` starts line comment.
+Newline or `;` separates statements, and brackets suppress newlines, except inside a `do` body.
+`#` starts line comment.
 
 ## Types
 

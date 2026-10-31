@@ -365,6 +365,16 @@ private:
         return stmts;
     }
 
+    // The body of a do block. A {...} isn't one: a call in braces may wrap across lines.
+    std::vector<std::unique_ptr<AstNode>> parseBlockUntil(
+        std::initializer_list<TokenType> terminators)
+    {
+        int outerDepth = lexer_.enterBlock();
+        auto stmts = parseStatementsUntil(terminators);
+        lexer_.leaveBlock(outerDepth);
+        return stmts;
+    }
+
     std::unique_ptr<AstNode> parseStatement() {
         switch (lexer_.peek().type) {
             case TokenType::Set:       return parseSet();
@@ -589,7 +599,7 @@ private:
     std::unique_ptr<AstNode> parseDoBlock() {
         auto loc = peekLoc();
         lexer_.next(); // consume 'do'
-        auto stmts = parseStatementsUntil({TokenType::End});
+        auto stmts = parseBlockUntil({TokenType::End});
         expect(TokenType::End, "Expected 'end'");
         return makeBlock(std::move(stmts), loc);
     }
@@ -761,7 +771,7 @@ private:
         std::unique_ptr<AstNode> body;
         if (lexer_.peek().type == TokenType::Do) {
             lexer_.next();
-            auto stmts = parseStatementsUntil({TokenType::End});
+            auto stmts = parseBlockUntil({TokenType::End});
             expect(TokenType::End, "Expected 'end'");
             body = makeBlock(std::move(stmts), loc);
         } else {
@@ -799,7 +809,7 @@ private:
         if (lexer_.peek().type == TokenType::Do) {
             // Multi-line form
             lexer_.next();
-            auto stmts = parseStatementsUntil(
+            auto stmts = parseBlockUntil(
                 {TokenType::End, TokenType::Elif, TokenType::Else});
             parts.push_back(makeBlock(std::move(stmts), loc));
 
@@ -807,7 +817,7 @@ private:
                 lexer_.next();
                 parts.push_back(parseAtom()); // elif condition
                 expect(TokenType::Do, "Expected 'do' after elif condition");
-                auto elifStmts = parseStatementsUntil(
+                auto elifStmts = parseBlockUntil(
                     {TokenType::End, TokenType::Elif, TokenType::Else});
                 parts.push_back(makeBlock(std::move(elifStmts), loc));
             }
@@ -815,7 +825,7 @@ private:
             if (lexer_.peek().type == TokenType::Else) {
                 lexer_.next();
                 expect(TokenType::Do, "Expected 'do' after else");
-                auto elseStmts = parseStatementsUntil({TokenType::End});
+                auto elseStmts = parseBlockUntil({TokenType::End});
                 parts.push_back(makeBlock(std::move(elseStmts), loc));
                 hasElse = true;
             }
@@ -843,7 +853,7 @@ private:
         expect(TokenType::In, "Expected 'in'");
         auto iterable = parseRangeOrAtom();
         expect(TokenType::Do, "Expected 'do'");
-        auto stmts = parseStatementsUntil({TokenType::End});
+        auto stmts = parseBlockUntil({TokenType::End});
         expect(TokenType::End, "Expected 'end'");
         return makeFor(varTok.text, std::move(iterable),
                        makeBlock(std::move(stmts), loc), loc);
@@ -853,7 +863,7 @@ private:
         auto loc = lexer_.next().location; // consume 'while'
         auto condition = parseAtom();
         expect(TokenType::Do, "Expected 'do'");
-        auto stmts = parseStatementsUntil({TokenType::End});
+        auto stmts = parseBlockUntil({TokenType::End});
         expect(TokenType::End, "Expected 'end'");
         return makeWhile(std::move(condition),
                          makeBlock(std::move(stmts), loc), loc);
@@ -862,6 +872,7 @@ private:
     std::unique_ptr<AstNode> parseMatch() {
         auto loc = lexer_.next().location; // consume 'match'
         auto scrutinee = parseAtom();
+        int outerDepth = lexer_.enterBlock();
         skipNewlines();
 
         std::vector<std::unique_ptr<AstNode>> arms;
@@ -875,6 +886,7 @@ private:
                 lexer_.next();
             }
         }
+        lexer_.leaveBlock(outerDepth);
         expect(TokenType::End, "Expected 'end' after match");
 
         return makeMatch(std::move(scrutinee), std::move(arms), loc);
@@ -894,7 +906,7 @@ private:
         std::unique_ptr<AstNode> body;
         if (lexer_.peek().type == TokenType::Do) {
             lexer_.next();
-            auto stmts = parseStatementsUntil({TokenType::End});
+            auto stmts = parseBlockUntil({TokenType::End});
             expect(TokenType::End, "Expected 'end'");
             body = makeBlock(std::move(stmts), loc);
         } else {

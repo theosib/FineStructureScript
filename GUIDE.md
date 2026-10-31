@@ -17,7 +17,8 @@ set x 5
 print x
 ```
 
-Newlines separate statements. Semicolons work too: `set x 5; print x`.
+Newlines separate statements. Semicolons work too: `set x 5; print x`. Inside `(...)`, `[...]`
+and `{...}` newlines are ignored, except in the body of a `do` block, where they still count.
 
 ---
 

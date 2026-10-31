@@ -81,6 +81,16 @@ Token Lexer::next() {
     return scanToken();
 }
 
+int Lexer::enterBlock() {
+    int outerDepth = nestingDepth_;
+    nestingDepth_ = 0;
+    return outerDepth;
+}
+
+void Lexer::leaveBlock(int outerDepth) {
+    nestingDepth_ = outerDepth;
+}
+
 Token Lexer::peek() {
     if (!peeked_) {
         peeked_ = scanToken();
