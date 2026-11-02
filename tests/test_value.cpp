@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
 #include "finescript/value.h"
 #include "finescript/map_data.h"
 #include "finescript/interner.h"

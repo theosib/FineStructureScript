@@ -8,8 +8,20 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Export compile_commands.json for IDE support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Build shared library by default; override with -DBUILD_SHARED_LIBS=OFF for static
-option(BUILD_SHARED_LIBS "Build shared libraries" ON)
+# Build shared library by default; override with -DBUILD_SHARED_LIBS=OFF for static.
+# Windows defaults to static: nothing here is marked dllexport, so an MSVC DLL would
+# export nothing and leave no import library to link.
+if(WIN32)
+    option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
+else()
+    option(BUILD_SHARED_LIBS "Build shared libraries" ON)
+endif()
+
+if(MSVC)
+    # M_PI and friends; UTF-8 sources; standard conformance
+    add_compile_definitions(_USE_MATH_DEFINES)
+    add_compile_options(/utf-8 /permissive- /Zc:__cplusplus)
+endif()
 
 # Ensure PIC for shared library compatibility
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

@@ -243,7 +243,7 @@ TEST_CASE("Integration: source loads and executes file", "[integration]") {
     ScriptEngine engine;
     ExecutionContext ctx(engine);
 
-    auto result = run(engine, ctx, "source \"" + tmpFile.string() + "\"");
+    auto result = run(engine, ctx, "source \"" + tmpFile.generic_string() + "\"");
     CHECK(result.success);
 
     // The sourced file should have set the variable in the current scope
@@ -265,7 +265,7 @@ TEST_CASE("Integration: source with function definition", "[integration]") {
     ScriptEngine engine;
     ExecutionContext ctx(engine);
 
-    run(engine, ctx, "source \"" + tmpFile.string() + "\"");
+    run(engine, ctx, "source \"" + tmpFile.generic_string() + "\"");
     auto result = run(engine, ctx, "sourced_add 3 4");
     CHECK(result.success);
     CHECK(result.returnValue.asInt() == 7);
@@ -754,7 +754,7 @@ TEST_CASE("Integration: source without resource finder uses literal path", "[int
     // No resource finder set — should use path as-is
     ExecutionContext ctx(engine);
 
-    auto result = run(engine, ctx, "source \"" + tmpFile.string() + "\"");
+    auto result = run(engine, ctx, "source \"" + tmpFile.generic_string() + "\"");
     CHECK(result.success);
 
     result = run(engine, ctx, "literal_var");
