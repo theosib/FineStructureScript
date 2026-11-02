@@ -1,6 +1,7 @@
 #pragma once
 
 #include "proxy_map.h"
+#include "value.h"
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -8,8 +9,6 @@
 #include <vector>
 
 namespace finescript {
-
-class Value;
 
 /// Unified map storage -- either a regular hash map or a proxy map.
 /// The evaluator uses this without checking which kind it is.

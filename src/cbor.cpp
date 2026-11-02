@@ -5,6 +5,7 @@
 #include "finescript/error.h"
 #include "finescript/script_engine.h"
 #include "finescript/execution_context.h"
+#include <cmath>
 #include <cstring>
 #include <unordered_set>
 
