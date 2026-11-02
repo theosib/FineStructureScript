@@ -800,6 +800,128 @@ TEST_CASE("Integration: resource finder with function definition", "[integration
     std::filesystem::remove(tmpFile);
 }
 
+// === Closures in local containers that outlive the call ===
+
+namespace {
+
+// Stands in for native code that keeps what it's given, as a UI does its widgets.
+struct Keeper {
+    Value kept;
+
+    explicit Keeper(ScriptEngine& engine) {
+        engine.registerFunction("keep", [this](ExecutionContext&, const std::vector<Value>& args) -> Value {
+            kept = args[0];
+            return Value::nil();
+        });
+    }
+};
+
+Value keptClosure(Keeper& keeper, ScriptEngine& engine, std::string_view field) {
+    return keeper.kept.asArray()[0].asMap().get(engine.intern(field));
+}
+
+} // namespace
+
+TEST_CASE("Integration: a closure in a let array survives native code keeping the array", "[integration][memory]") {
+    ScriptEngine engine;
+    Keeper keeper(engine);
+    ExecutionContext ctx(engine);
+
+    REQUIRE(run(engine, ctx, R"(
+        fn build [] do
+            let local 41
+            let rows [{=click fn [] do
+                (local + 1)
+            end}]
+            keep rows
+            nil
+        end
+        build
+    )").success);
+
+    auto result = engine.callFunction(keptClosure(keeper, engine, "click"), {}, ctx);
+    CHECK(result.asInt() == 42);
+}
+
+TEST_CASE("Integration: a closure pushed onto a local array survives native code keeping it", "[integration][memory]") {
+    ScriptEngine engine;
+    Keeper keeper(engine);
+    ExecutionContext ctx(engine);
+
+    REQUIRE(run(engine, ctx, R"(
+        fn build [] do
+            let rows []
+            rows.push {=click fn [] 42}
+            keep rows
+            nil
+        end
+        build
+    )").success);
+
+    auto result = engine.callFunction(keptClosure(keeper, engine, "click"), {}, ctx);
+    CHECK(result.asInt() == 42);
+}
+
+TEST_CASE("Integration: a closure pushed onto the caller's array survives the callee", "[integration][memory]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    auto result = run(engine, ctx, R"(
+        fn add_to [list] do
+            list.push fn [] 42
+            nil
+        end
+        let list []
+        add_to list
+        let click list[0]
+        {click}
+    )");
+    INFO(result.error);
+    REQUIRE(result.success);
+    CHECK(result.returnValue.asInt() == 42);
+}
+
+TEST_CASE("Integration: a call scope kept for a native holder is freed with the holder", "[integration][memory]") {
+    ScriptEngine engine;
+    Keeper keeper(engine);
+    ExecutionContext ctx(engine);
+
+    REQUIRE(run(engine, ctx, R"(
+        fn build [] do
+            let rows [{=click fn [] 42}]
+            keep rows
+            nil
+        end
+        build
+    )").success);
+
+    std::weak_ptr<Scope> weakCallScope = keptClosure(keeper, engine, "click").asClosure().scope();
+    CHECK_FALSE(weakCallScope.expired());
+    keeper.kept = Value::nil();
+    CHECK(weakCallScope.expired());
+}
+
+TEST_CASE("Integration: a local array stays readable while something else keeps its scope", "[integration][memory]") {
+    ScriptEngine engine;
+    Keeper keeper(engine);
+    ExecutionContext ctx(engine);
+
+    auto result = run(engine, ctx, R"(
+        fn build [] do
+            let rows [{=click fn [] 42}]
+            keep rows
+            return fn [] do
+                rows.length
+            end
+        end
+        let count {build}
+        {count}
+    )");
+    INFO(result.error);
+    REQUIRE(result.success);
+    CHECK(result.returnValue.asInt() == 1);
+}
+
 // === Phase R1.1: Memory leak freedom, Error locations, and Interner switching ===
 
 TEST_CASE("Integration: ExecutionContext destruction frees closures, scopes, and AST", "[integration][memory]") {

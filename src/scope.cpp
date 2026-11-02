@@ -52,7 +52,8 @@ bool isDescendantOrSelf(const std::shared_ptr<Scope>& candidate, const Scope* an
     return false;
 }
 
-void breakCyclesImpl(Value& val, Scope* owner, std::unordered_set<const void*>& visited) {
+void breakCyclesImpl(Value& val, Scope* owner, std::unordered_set<const void*>& visited,
+                     bool& weakened) {
     if (val.isClosure()) {
         const auto& orig = val.asClosure();
         auto cs = orig.scope();
@@ -64,6 +65,7 @@ void breakCyclesImpl(Value& val, Scope* owner, std::unordered_set<const void*>& 
                 copy->capturedScope.reset();
                 copy->weakCapturedScope = cs;
                 val = Value::closure(std::move(copy));
+                weakened = true;
             }
             return;
         }
@@ -92,7 +94,7 @@ void breakCyclesImpl(Value& val, Scope* owner, std::unordered_set<const void*>& 
         auto& arr = val.asArrayMut();
         if (!visited.insert(&arr).second) return;
         for (auto& elem : arr) {
-            breakCyclesImpl(elem, owner, visited);
+            breakCyclesImpl(elem, owner, visited, weakened);
         }
         return;
     }
@@ -104,7 +106,7 @@ void breakCyclesImpl(Value& val, Scope* owner, std::unordered_set<const void*>& 
         for (uint32_t k : map.keys()) {
             Value entry = map.get(k);
             Value updated = entry;
-            breakCyclesImpl(updated, owner, visited);
+            breakCyclesImpl(updated, owner, visited, weakened);
             if (updated.isClosure() && entry.isClosure() &&
                 updated.closurePtr().get() != entry.closurePtr().get()) {
                 bool wasMethod = map.isMethod(k);
@@ -195,7 +197,7 @@ void Scope::define(uint32_t symbolId, Value value) {
 
 void Scope::breakCyclesIn(Value& value) {
     std::unordered_set<const void*> visited;
-    breakCyclesImpl(value, this, visited);
+    breakCyclesImpl(value, this, visited, weakenedClosures_);
 
     // Also weaken any ancestor parent_ link from descendant scopes back to `this`
     std::unordered_set<const void*> visitedAnc;
@@ -278,7 +280,18 @@ void Scope::finalizeCallScope(Value& returnValue) {
     };
     strengthenEscaping(strengthenEscaping, returnValue);
 
-    // 2. For any local Map or Array in `this->bindings_` that now holds a strong
+    // 2. A local container can leave without being returned: native code may keep it, or it
+    //    may be the caller's. With nothing else holding `this`, a closure weakened into one
+    //    would expire now, so strengthen them all. Step 3 stops any that stayed local from
+    //    keeping `this` alive. If something does hold `this`, the weak ones still work, and
+    //    the bindings it can read have to stay as they are.
+    if (weakenedClosures_ && weak_from_this().use_count() == 1) {
+        for (auto& [sym, bval] : bindings_) {
+            if (bval.isArray() || bval.isMap()) strengthenEscaping(strengthenEscaping, bval);
+        }
+    }
+
+    // 3. For any local Map or Array in `this->bindings_` that now holds a strong
     //    closure back to `this`, replace the local binding with a weak proxy (Map)
     //    or nil (Array) so `this` does not form a strong cycle with the escaped container.
     for (auto& [sym, bval] : bindings_) {

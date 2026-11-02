@@ -30,7 +30,8 @@ public:
     void breakCyclesIn(Value& value);
 
     /// Prepare a call frame scope for exit: strengthen any closures escaping via
-    /// `returnValue` and weaken local container back-edges into this scope.
+    /// `returnValue` or in containers that may outlive this scope, and weaken local
+    /// container back-edges into this scope.
     void finalizeCallScope(Value& returnValue);
 
     /// Clear all bindings in this scope.
@@ -51,6 +52,7 @@ private:
     std::shared_ptr<Scope> parent_;
     std::weak_ptr<Scope> weakParent_;
     std::unordered_map<uint32_t, Value> bindings_;
+    bool weakenedClosures_ = false;  // a closure over this scope was made weak
 };
 
 } // namespace finescript
