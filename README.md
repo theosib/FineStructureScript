@@ -65,3 +65,7 @@ if (result.success) {
 ## Namespace
 
 `finescript`. Build target: `finescript` (shared library). File extension: `.fsc`.
+
+## License
+
+Apache License 2.0: see [LICENSE](LICENSE) and [NOTICE](NOTICE).
