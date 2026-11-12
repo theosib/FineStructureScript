@@ -195,7 +195,15 @@ void Scope::define(uint32_t symbolId, Value value) {
     bindings_[symbolId] = std::move(value);
 }
 
+void Scope::noteClosure() {
+    for (auto s = shared_from_this(); s; s = s->parent()) {
+        s->closuresBelow_++;
+    }
+}
+
 void Scope::breakCyclesIn(Value& value) {
+    // Both walks below only act on closures over this scope or one below it
+    if (closuresBelow_ == 0) return;
     std::unordered_set<const void*> visited;
     breakCyclesImpl(value, this, visited, weakenedClosures_);
 
@@ -232,6 +240,9 @@ void Scope::breakCyclesIn(Value& value) {
 }
 
 void Scope::finalizeCallScope(Value& returnValue) {
+    // Every step below only acts on closures over this scope or one below it
+    if (closuresBelow_ == 0) return;
+
     // 1. Strengthen any closures escaping in `returnValue` whose scope is `this`
     //    or a descendant of `this`.
     std::unordered_set<const void*> visited;

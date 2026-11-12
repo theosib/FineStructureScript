@@ -34,6 +34,10 @@ public:
     /// container back-edges into this scope.
     void finalizeCallScope(Value& returnValue);
 
+    /// A closure was made over this scope. Until one is, nothing here can be in a cycle through
+    /// it or a scope below it, so breakCyclesIn and finalizeCallScope have nothing to do.
+    void noteClosure();
+
     /// Clear all bindings in this scope.
     void clear();
 
@@ -53,6 +57,7 @@ private:
     std::weak_ptr<Scope> weakParent_;
     std::unordered_map<uint32_t, Value> bindings_;
     bool weakenedClosures_ = false;  // a closure over this scope was made weak
+    uint32_t closuresBelow_ = 0;     // closures made over this scope or one below it
 };
 
 } // namespace finescript

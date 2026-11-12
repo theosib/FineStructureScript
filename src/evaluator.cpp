@@ -711,6 +711,7 @@ Value Evaluator::evalFn(const AstNode& node, std::shared_ptr<Scope> scope) {
     closure->astRoot = currentAstRoot_;  // keeps AST alive
     closure->capturedScope = scope;
     closure->weakCapturedScope = scope;
+    scope->noteClosure();
     closure->numRequired = static_cast<size_t>(node.intValue);
     closure->paramIds = node.cachedNamePartIds;
 
@@ -838,6 +839,7 @@ Value Evaluator::evalOn(const AstNode& node, std::shared_ptr<Scope> scope,
     closure->astRoot = currentAstRoot_;  // keeps AST alive
     closure->capturedScope = scope;
     closure->weakCapturedScope = scope;
+    scope->noteClosure();
 
     Value handlerVal = Value::closure(closure);
     ctx->registerEventHandler(node.cachedSymbolId, handlerVal);
