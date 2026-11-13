@@ -390,7 +390,13 @@ private:
             case TokenType::Continue:  return makeContinue(lexer_.next().location);
             case TokenType::Source:    return parseSource();
             case TokenType::Do:        return parseDoBlock();
-            case TokenType::LeftBrace: return parseBraceExpr();
+            case TokenType::LeftBrace: {
+                // A call in braces can be the receiver of a method: {{words}.split " "}
+                auto loc = peekLoc();
+                auto first = parseBraceExpr();
+                if (lexer_.peek().type != TokenType::Dot) return first;
+                return parsePrefixCallFrom(parsePostfix(std::move(first)), loc);
+            }
             case TokenType::NullCoalesce:  return parseCoalescePrefix();
             case TokenType::FalsyCoalesce: return parseCoalescePrefix();
             default:                   return parsePrefixCall();
@@ -401,8 +407,13 @@ private:
 
     std::unique_ptr<AstNode> parsePrefixCall() {
         auto loc = peekLoc();
+        return parsePrefixCallFrom(parseAtom(), loc);
+    }
+
+    // A prefix call whose verb has been read already
+    std::unique_ptr<AstNode> parsePrefixCallFrom(std::unique_ptr<AstNode> verb, SourceLocation loc) {
         std::vector<std::unique_ptr<AstNode>> parts;
-        parts.push_back(parseAtom());
+        parts.push_back(std::move(verb));
         while (isAtomStart()) {
             parts.push_back(parseAtom());
         }

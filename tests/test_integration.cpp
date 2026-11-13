@@ -1126,3 +1126,33 @@ total
     REQUIRE(result.success);
     CHECK(result.returnValue.asInt() == 6);
 }
+
+// === Methods on a call's result ===
+
+TEST_CASE("Integration: a method on a braced call's result", "[integration]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+
+    // As the whole of a call: the verb is the method on what the inner call gave
+    auto result = run(engine, ctx, "fn words [] { return \"a b c\" }\n{{words}.split \" \"}");
+    REQUIRE(result.success);
+    REQUIRE(result.returnValue.isArray());
+    CHECK(result.returnValue.asArray().size() == 3);
+
+    // A field of one still reads as before, and so does a call standing alone
+    result = run(engine, ctx, "fn pair [] { return [1 2] }\n{pair}.length");
+    REQUIRE(result.success);
+    CHECK(result.returnValue.asInt() == 2);
+    result = run(engine, ctx, "{pair}");
+    REQUIRE(result.success);
+    CHECK(result.returnValue.isArray());
+}
+
+TEST_CASE("Integration: a method call inside an if's braces", "[integration]") {
+    ScriptEngine engine;
+    ExecutionContext ctx(engine);
+    auto result = run(engine, ctx, "set a [1 2]\nif true { a.set 0 9 } { a.set 1 9 }\na");
+    REQUIRE(result.success);
+    CHECK(result.returnValue.asArray()[0].asInt() == 9);
+    CHECK(result.returnValue.asArray()[1].asInt() == 2);
+}
