@@ -13,6 +13,12 @@ class ScriptEngine;
 class ExecutionContext {
 public:
     explicit ExecutionContext(ScriptEngine& engine);
+
+    /// A context whose top-level names live in `scope`. Make it a child of another context's
+    /// scope (scope()->createChild()) for scripts that see what that one defines and keep their
+    /// own names to themselves; or share one scope between contexts made this way. Names a
+    /// script looks up are found when it runs, so the other scripts may load later.
+    ExecutionContext(ScriptEngine& engine, std::shared_ptr<Scope> scope);
     ~ExecutionContext();
 
     void set(std::string_view name, Value value);

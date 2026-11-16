@@ -1156,3 +1156,30 @@ TEST_CASE("Integration: a method call inside an if's braces", "[integration]") {
     CHECK(result.returnValue.asArray()[0].asInt() == 9);
     CHECK(result.returnValue.asArray()[1].asInt() == 2);
 }
+
+TEST_CASE("Integration: a context in a child scope sees its parent's names", "[integration]") {
+    ScriptEngine engine;
+    auto shared = engine.globalScope()->createChild();
+    ExecutionContext game(engine, shared);
+    ExecutionContext block(engine, shared->createChild());
+    ExecutionContext other(engine);
+
+    // The block's script loads first: what it calls is looked up when it runs
+    REQUIRE(run(engine, block, "fn spill [n] ({double n} + 1)").success);
+    REQUIRE(run(engine, game, "fn double [n] (n * 2)\nset STACK 64").success);
+
+    auto r = run(engine, block, "spill 4");
+    REQUIRE(r.success);
+    CHECK(r.returnValue.asInt() == 9);
+    CHECK(run(engine, block, "STACK").returnValue.asInt() == 64);
+
+    // Its own names stay its own
+    REQUIRE(run(engine, block, "fn local_only [x] x").success);
+    CHECK(run(engine, block, "local_only 7").returnValue.asInt() == 7);
+    CHECK_FALSE(run(engine, game, "local_only 7").success);
+    // A context of its own sees neither
+    CHECK_FALSE(run(engine, other, "double 2").success);
+    // Contexts made on one scope share it
+    ExecutionContext alsoGame(engine, shared);
+    CHECK(run(engine, alsoGame, "double 5").returnValue.asInt() == 10);
+}

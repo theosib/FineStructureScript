@@ -14,6 +14,13 @@ ExecutionContext::ExecutionContext(ScriptEngine& engine)
     contextScope_->define(engine_.intern("global"), Value::proxyMap(std::move(globalProxy)));
 }
 
+ExecutionContext::ExecutionContext(ScriptEngine& engine, std::shared_ptr<Scope> scope)
+    : engine_(engine), contextScope_(std::move(scope)) {
+    if (!contextScope_) contextScope_ = engine.globalScope()->createChild();
+    auto globalProxy = std::make_shared<ScopeProxyMap>(contextScope_);
+    contextScope_->define(engine_.intern("global"), Value::proxyMap(std::move(globalProxy)));
+}
+
 ExecutionContext::~ExecutionContext() {
     eventHandlers_.clear();
     if (contextScope_) {
